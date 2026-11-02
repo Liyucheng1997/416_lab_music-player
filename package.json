@@ -1,0 +1,69 @@
+{
+  "name": "tingyin-music",
+  "productName": "听音",
+  "version": "1.0.0",
+  "description": "苹果式简约本地音乐播放器：资料库索引、分类浏览、桌面歌词、在线歌词/封面、AI 实时赏析",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test test/*.test.mjs",
+    "dist": "electron-builder --win"
+  },
+  "author": "liyucheng",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "lucide": "^1.66.0",
+    "music-metadata": "^12.3.4"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Liyucheng1997/tingyin-music.git"
+  },
+  "build": {
+    "appId": "com.liyucheng.tingyin",
+    "productName": "听音",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "听音",
+      "artifactName": "TingYin-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "TingYin-Portable-${version}.exe"
+    }
+  }
+}

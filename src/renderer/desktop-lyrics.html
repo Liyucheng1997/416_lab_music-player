@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app:; style-src 'self' app: 'unsafe-inline'" />
+  <title>桌面歌词</title>
+  <link rel="stylesheet" href="styles/desktop-lyrics.css" />
+</head>
+<body>
+  <div class="frame" id="frame">
+    <div class="bar" id="bar"></div>
+    <button class="unlock" id="unlock" title="解锁"></button>
+    <div class="lines">
+      <div class="line main" id="main"><span class="base"></span><span class="sung"></span></div>
+      <div class="line sub" id="sub"></div>
+    </div>
+  </div>
+  <script type="module" src="js/desktop-lyrics.js"></script>
+</body>
+</html>

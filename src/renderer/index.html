@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app:; style-src 'self' app: 'unsafe-inline'; img-src 'self' app: media: data: https:; media-src media:; connect-src 'self' app: media:" />
+  <title>听音</title>
+  <link rel="stylesheet" href="styles/tokens.css" />
+  <link rel="stylesheet" href="styles/app.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="titlebar">
+      <div class="brand">
+        <div class="logo-mark"><img src="build/icon.png" alt="" /></div>
+        <div class="brand-text"><b>听音</b><small>Music</small></div>
+      </div>
+      <div class="nav-arrows">
+        <button class="icon-btn" id="navBack" title="后退"></button>
+        <button class="icon-btn" id="navFwd" title="前进"></button>
+      </div>
+      <label class="search-capsule">
+        <span id="searchIco"></span>
+        <input id="search" placeholder="搜索歌曲、歌手、专辑" spellcheck="false" />
+        <kbd>Ctrl F</kbd>
+      </label>
+      <div class="scan-status" id="scanStatus"></div>
+      <div class="tb-actions">
+        <button class="tb-round" id="themeBtn" title="切换深色模式"></button>
+        <button class="tb-round" id="settingsBtn" title="设置"></button>
+      </div>
+    </header>
+    <div class="body">
+      <nav class="sidebar" id="sidebar"></nav>
+      <main class="content card" id="content"></main>
+      <aside class="side-panel card" id="side"></aside>
+    </div>
+    <footer class="playerbar card" id="playerbar"></footer>
+  </div>
+  <div id="immersive" class="immersive" hidden></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
