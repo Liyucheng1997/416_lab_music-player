@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS = {
   closeToTray: false,
   ffmpegPath: '',
   eq: { enabled: false, preamp: 0, bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preset: '平直' },
-  lyrics: { online: true, autoCover: true, artistImages: true },
+  lyrics: { online: true, simplified: true, autoCover: true, artistImages: true },
   desktopLyrics: { enabled: false, locked: false, fontSize: 34, showTrans: true, color: 'blue', bounds: null },
   ai: { apiKeyEnc: '', baseURL: '', model: DEFAULT_MODEL, effort: 'low', autoTimeline: true },
   mcp: { enabled: false, port: 17890, lan: false, token: '' },
@@ -102,7 +102,7 @@ const library = new Library({
   onProgress: (p) => send('lib:progress', p),
   onChange: () => send('lib:changed'),
 });
-const online = new Online({ dir: DATA, fetch: (...a) => net.fetch(...a), library });
+const online = new Online({ dir: DATA, fetch: (...a) => net.fetch(...a), library, simplified: () => settings.data.lyrics.simplified });
 const ai = new AiService({
   dir: DATA,
   getSettings: () => ({ ai: { ...settings.data.ai, apiKey: apiKey() } }),
@@ -262,7 +262,7 @@ function applyTitleBarTheme() {
   mainWin.setBackgroundColor(c.bg);
 }
 
-// 桌面歌词：透明、置顶、无边框；锁定后鼠标穿透
+// 桌面歌词：透明、置顶、无边框；只有歌词文字处接收鼠标，锁定后只有解锁按钮接收
 function createLyricWindow() {
   if (lyricWin && !lyricWin.isDestroyed()) return lyricWin;
   const area = screen.getPrimaryDisplay().workArea;
@@ -290,6 +290,8 @@ function createLyricWindow() {
   lyricWin.loadURL('app://local/desktop-lyrics.html');
   lyricWin.once('ready-to-show', () => {
     lyricWin.showInactive();
+    // 默认点击穿透；歌词窗口根据鼠标是否在歌词上通过 dl:hover 临时接收点击
+    lyricWin.setIgnoreMouseEvents(true, { forward: true });
     applyLock();
   });
   const saveBounds = () => { settings.data.desktopLyrics.bounds = lyricWin.getBounds(); settings.save(); };
@@ -299,10 +301,9 @@ function createLyricWindow() {
   return lyricWin;
 }
 
+// 歌词窗口收到新样式后会重新计算命中区域，并用 dl:hover 告诉这边要不要穿透
 function applyLock() {
   if (!lyricWin || lyricWin.isDestroyed()) return;
-  const locked = settings.data.desktopLyrics.locked;
-  lyricWin.setIgnoreMouseEvents(locked, { forward: true });
   lyricWin.webContents.send('dl:style', settings.data.desktopLyrics);
 }
 
@@ -418,6 +419,7 @@ function registerIpc() {
     return t ? online.getLyrics(t, { online: settings.data.lyrics.online }) : { none: true };
   });
   handle('lyrics:search', (q) => online.searchLyrics(q));
+  handle('lyrics:fetch', (item) => online.fetchLyrics(item));
   handle('lyrics:save', (id, data) => online.saveLyrics(id, data));
   handle('cover:search', (q) => online.searchCovers(q));
   handle('cover:apply', (id, url) => online.applyCover(id, url));
@@ -540,9 +542,22 @@ function registerIpc() {
     else send('player:command', cmd);
   });
   ipcMain.on('dl:ready', () => { applyLock(); send('dl:resend'); });
-  // 锁定状态下，鼠标移到解锁按钮上时临时接收点击
+  // 鼠标在歌词上（锁定时：在解锁按钮上）才接收点击，其余地方穿透
   ipcMain.on('dl:hover', (_e, over) => {
-    if (lyricWin && settings.data.desktopLyrics.locked) lyricWin.setIgnoreMouseEvents(!over, { forward: true });
+    if (lyricWin && !lyricWin.isDestroyed()) lyricWin.setIgnoreMouseEvents(!over, { forward: true });
+  });
+  // 拖动歌词：按光标的屏幕坐标移动，避免高分屏下换算误差
+  let drag = null;
+  ipcMain.on('dl:drag', (_e, phase) => {
+    if (!lyricWin || lyricWin.isDestroyed()) return;
+    const p = screen.getCursorScreenPoint();
+    if (phase === 'start') drag = { ...lyricWin.getBounds(), cx: p.x, cy: p.y };
+    else if (phase === 'move' && drag) lyricWin.setBounds({ x: drag.x + p.x - drag.cx, y: drag.y + p.y - drag.cy, width: drag.width, height: drag.height });
+    else if (phase === 'end' && drag) {
+      drag = null;
+      settings.data.desktopLyrics.bounds = lyricWin.getBounds();
+      settings.save();
+    }
   });
 }
 

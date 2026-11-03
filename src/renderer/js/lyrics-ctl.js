@@ -26,6 +26,7 @@ export async function loadLyrics(track) {
   lyrics.instrumental = false;
   lyrics.offset = 0;
   lyrics.error = '';
+  lyrics.simplified = state.settings?.lyrics?.simplified;
   emit('lyrics', lyrics);
   pushDesktop(true);
   if (!track) return;
@@ -43,6 +44,7 @@ export async function loadLyrics(track) {
   lyrics.error = data.error || '';
   lyrics.offset = data.offset || 0;
   lyrics.parsed = data.lrc ? parseLrc(data.lrc) : { synced: false, lines: [] };
+  if (data.trans) mergeTranslation(lyrics.parsed, data.trans);
   if (data.aiTrans) mergeTranslation(lyrics.parsed, data.aiTrans);
   emit('lyrics', lyrics);
   tick(true);
@@ -95,6 +97,10 @@ on('player:track', (t) => loadLyrics(t));
 on('player:time', () => { tick(); pushDesktop(false); });
 on('player:state', () => pushDesktop(true));
 on('lyrics:changed', (id) => { if (id === lyrics.trackId) loadLyrics(state.byId.get(id)); });
+// 切换「繁体转简体」后重新加载当前歌词
+on('settings', (s) => {
+  if (lyrics.trackId && s.lyrics?.simplified !== lyrics.simplified) loadLyrics(state.byId.get(lyrics.trackId));
+});
 window.api.on('dl:resend', () => pushDesktop(true));
 
 // 播放中用 rAF 让歌词滚动更跟手（timeupdate 只有 4Hz）

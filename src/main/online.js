@@ -1,12 +1,15 @@
-// 在线资源：歌词（本地 .lrc / 内嵌 / LRCLIB）、专辑封面（iTunes / Deezer）、歌手图片（Deezer）
+// 在线资源：歌词（本地 .lrc / 内嵌 / 网易云 / QQ 音乐 / 酷狗 / LRCLIB）、专辑封面（iTunes / Deezer）、歌手图片（Deezer）
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { readJson, writeJson } from './store.js';
 import { albumKeyOf } from './album-key.js';
+import { createSources, toSimplified } from './lyric-sources.js';
 
 const UA = 'TingYin/0.1 (local music player; https://github.com/)';
+// 自动查找的来源变了就递增，让之前缓存的「未找到」重新查一次
+const LYRIC_SOURCES_VERSION = 2;
 const hash = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 20);
 
 // 去掉括号里的版本信息，便于匹配：「晴天 (Live)」→「晴天」
@@ -31,10 +34,38 @@ export function overlap(query, text) {
   return q.filter((c) => t.includes(c)).length / q.length;
 }
 
+export const firstArtist = (s = '') => s.split(/\s*[/;&,、]\s*/)[0].trim();
+
+// 比较用：转简体、小写、去掉空白和标点
+const norm = (s = '') => toSimplified(cleanTitle(s)).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+
+// 候选歌词和要找的歌有多像；accept = 能不能直接自动采用
+export function matchScore(x, want) {
+  const t = norm(x.title);
+  const wt = norm(want.title);
+  const titleHit = !!wt && t === wt ? 2 : wt && t && (t.includes(wt) || wt.includes(t)) ? 1 : 0;
+  const a = norm(x.artist);
+  const wa = norm(want.artist);
+  const artistHit = !!wa && !!a && (a.includes(wa) || wa.includes(a));
+  const diff = want.duration && x.duration ? Math.abs(x.duration - want.duration) : null;
+  let score = titleHit * 25 + (artistHit ? 30 : 0) + (x.src?.bonus || 0) + (x.exact ? 3 : 0);
+  if (diff != null) score -= Math.min(40, diff * 1.5);
+  if (x.synced === false) score -= 15;
+  // 时长差太多多半是别的版本；歌手对不上时（例如英文名 / 中文名）要求时长几乎一致
+  const accept = titleHit > 0 && (diff == null || diff <= 15) && (artistHit || !wa || (diff != null && diff <= 3));
+  return { score, accept };
+}
+
+function lyricData(x, got) {
+  return { lrc: got.lrc || '', trans: got.trans || '', instrumental: !!got.instrumental, source: x.src.name, remoteId: `${x.src.key}:${x.id}` };
+}
+
 export class Online {
-  constructor({ dir, fetch, library }) {
+  constructor({ dir, fetch, library, simplified = () => true }) {
     this.fetch = fetch;
     this.library = library;
+    this.simplified = simplified;
+    this.sources = createSources(this);
     this.lyricDir = path.join(dir, 'lyrics');
     this.artistDir = path.join(dir, 'artists');
     fs.mkdirSync(this.lyricDir, { recursive: true });
@@ -43,12 +74,12 @@ export class Online {
   }
 
   // 服务繁忙（429 / 503）时退避重试两次
-  async json(url, timeout = 12000) {
+  async json(url, timeout = 12000, headers = {}) {
     for (let attempt = 0; ; attempt++) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeout);
       try {
-        const res = await this.fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: ctrl.signal });
+        const res = await this.fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', ...headers }, signal: ctrl.signal });
         if (res.status === 404) return null;
         if ((res.status === 429 || res.status === 503) && attempt < 2) {
           await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
@@ -75,7 +106,12 @@ export class Online {
   async getLyrics(track, opts = {}) {
     const cached = await readJson(this.lyricCacheFile(track.id));
     const found = await this.findLyrics(track, cached, opts);
-    return { ...found, offset: cached?.offset || 0, aiTrans: cached?.aiTrans || null };
+    const out = { ...found, offset: cached?.offset || 0, aiTrans: cached?.aiTrans || null };
+    return this.simplified() ? this.simplify(out) : out;
+  }
+
+  simplify(x) {
+    return { ...x, lrc: toSimplified(x.lrc), trans: toSimplified(x.trans) };
   }
 
   async findLyrics(track, cached, { online = true } = {}) {
@@ -96,74 +132,67 @@ export class Online {
     }
 
     if (!online) return { none: true };
-    // 「未找到」只缓存 3 天，之后再自动试一次
-    if (cached?.none && Date.now() - cached.at < 3 * 864e5) return cached;
+    // 「未找到」只缓存 3 天，之后再自动试一次；歌词来源变了也重试
+    if (cached?.none && cached.v === LYRIC_SOURCES_VERSION && Date.now() - cached.at < 3 * 864e5) return cached;
     try {
-      const hit = await this.lrclibBest(track);
-      const data = hit
-        ? { lrc: hit.syncedLyrics || hit.plainLyrics || '', instrumental: !!hit.instrumental, source: 'LRCLIB', remoteId: hit.id }
-        : { none: true };
-      await this.saveLyrics(track.id, data);
-      return data;
+      const data = (await this.autoLyrics(track)) || { none: true, v: LYRIC_SOURCES_VERSION };
+      return await this.saveLyrics(track.id, data);
     } catch (e) {
       return { none: true, error: String(e.message || e) };
     }
   }
 
-  async lrclibBest(track) {
-    const title = cleanTitle(track.title);
-    const artist = (track.artist || '').split(/\s*[/;&,、]\s*/)[0];
-    if (track.duration && artist) {
-      const q = new URLSearchParams({ track_name: title, artist_name: artist, album_name: track.album || '', duration: String(Math.round(track.duration)) });
-      const exact = await this.json(`https://lrclib.net/api/get?${q}`);
-      if (exact && (exact.syncedLyrics || exact.plainLyrics || exact.instrumental)) return exact;
+  // 各来源一起搜，按匹配度从高到低取歌词，取到为止
+  async autoLyrics(track) {
+    const want = { title: cleanTitle(track.title), artist: firstArtist(track.artist), duration: track.duration };
+    const tasks = this.sources.map((src) => src.search(want).then((list) => list.map((x) => ({ ...x, src }))));
+    const lrclib = this.sources.find((s) => s.key === 'lrclib');
+    if (track.duration && want.artist) {
+      tasks.push(lrclib.exact({ ...want, album: track.album }).then((x) => (x ? [{ ...x, src: lrclib, exact: true }] : [])));
     }
-    const list = await this.lrclibSearch({ title, artist });
-    return this.pickBest(list, track);
+    const results = await Promise.allSettled(tasks);
+    if (results.every((r) => r.status === 'rejected')) throw results[0].reason;
+    const cands = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+      .map((x) => ({ x, m: matchScore(x, want) }))
+      .filter(({ m }) => m.accept)
+      .sort((a, b) => b.m.score - a.m.score);
+    for (const { x } of cands.slice(0, 5)) {
+      try {
+        const got = await x.src.fetch(x);
+        if (got.lrc?.trim() || got.instrumental) return lyricData(x, got);
+      } catch { /* 这个来源取不到，试下一个 */ }
+    }
+    return null;
   }
 
-  async lrclibSearch({ title, artist, q }) {
-    const params = q ? new URLSearchParams({ q }) : new URLSearchParams({ track_name: title || '', ...(artist ? { artist_name: artist } : {}) });
-    let list = (await this.json(`https://lrclib.net/api/search?${params}`)) || [];
-    if (!list.length && !q && title) list = (await this.json(`https://lrclib.net/api/search?${new URLSearchParams({ q: `${title} ${artist || ''}`.trim() })}`)) || [];
-    return list;
-  }
-
-  pickBest(list, track) {
-    if (!list.length) return null;
-    const title = cleanTitle(track.title).toLowerCase();
-    const score = (x) => {
-      let s = 0;
-      if (x.syncedLyrics) s += 30;
-      if (cleanTitle(x.trackName || '').toLowerCase() === title) s += 25;
-      if (track.artist && (x.artistName || '').toLowerCase().includes(track.artist.toLowerCase().split(/\s*[/;&,、]\s*/)[0])) s += 20;
-      if (track.duration && x.duration) s -= Math.min(40, Math.abs(x.duration - track.duration));
-      return s;
-    };
-    const best = [...list].sort((a, b) => score(b) - score(a))[0];
-    // 时长差得太多多半是别的版本，宁缺毋滥
-    if (track.duration && best.duration && Math.abs(best.duration - track.duration) > 20 && list.length > 1) return null;
-    return best;
-  }
-
+  // 手动搜索：所有来源的结果合在一起按匹配度排序；国内来源的歌词在选中时再取
   async searchLyrics(query) {
-    const list = await this.lrclibSearch(query);
-    return list.slice(0, 30).map((x) => ({
-      id: x.id,
-      source: 'LRCLIB',
-      title: x.trackName,
-      artist: x.artistName,
-      album: x.albumName,
-      duration: x.duration,
-      synced: !!x.syncedLyrics,
-      instrumental: !!x.instrumental,
-      lrc: x.syncedLyrics || x.plainLyrics || '',
-    }));
+    const want = { title: (query.title || '').trim(), artist: firstArtist(query.artist), duration: query.duration };
+    const results = await Promise.allSettled(this.sources.map((src) => src.search(want).then((list) => list.map((x) => ({ ...x, src })))));
+    if (results.every((r) => r.status === 'rejected')) throw results[0].reason;
+    const all = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+    return all
+      .map((x) => ({ x, s: matchScore(x, want).score }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 40)
+      .map(({ x }) => {
+        const item = { id: x.id, provider: x.src.key, source: x.src.name, title: x.title, artist: x.artist, album: x.album, duration: x.duration, synced: x.synced, instrumental: x.instrumental, lrc: x.lrc };
+        return this.simplified() && item.lrc ? this.simplify(item) : item;
+      });
+  }
+
+  async fetchLyrics(item) {
+    const src = this.sources.find((s) => s.key === item.provider);
+    if (!src) throw new Error('未知的歌词来源');
+    const data = lyricData({ ...item, src }, await src.fetch(item));
+    return this.simplified() ? this.simplify(data) : data;
   }
 
   async saveLyrics(id, data) {
     const old = (await readJson(this.lyricCacheFile(id))) || {};
     const next = { ...old, ...data, at: Date.now() };
+    // 换了一份歌词：按行号对应的 AI 翻译已经对不上了
+    if ('lrc' in data && data.lrc !== old.lrc && !('aiTrans' in data)) delete next.aiTrans;
     next.none = !next.lrc && !next.instrumental;
     await writeJson(this.lyricCacheFile(id), next);
     return next;

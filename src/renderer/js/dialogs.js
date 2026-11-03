@@ -3,7 +3,7 @@ import { h, icon, clear, fmtTime } from './dom.js';
 import { state, emit, on, saveSettings } from './store.js';
 import { modal, toast } from './ui.js';
 import { EQ_FREQS, EQ_PRESETS, applyEq } from './player.js';
-import { parseLrc } from './lrc.js';
+import { parseLrc, mergeTranslation } from './lrc.js';
 
 // ---------------- 查找歌词 ----------------
 export function openLyricsSearch(track) {
@@ -19,20 +19,15 @@ export function openLyricsSearch(track) {
   async function search() {
     clear(list, h('div', { class: 'empty', style: { padding: '24px' } }, h('div', { class: 'spinner' })));
     try {
-      const res = await window.api.invoke('lyrics:search', { title: title.value.trim(), artist: artist.value.trim() });
+      const res = await window.api.invoke('lyrics:search', { title: title.value.trim(), artist: artist.value.trim(), duration: track.duration });
       if (!res.length) return clear(list, h('div', { class: 'empty', style: { padding: '24px' } }, '没有找到，换个关键词试试，比如只填歌名'));
       clear(list, res.map((r) => {
         const diff = track.duration && r.duration ? Math.round(r.duration - track.duration) : null;
-        const row = h('div', { class: 'result-row', onclick: () => {
-          list.querySelectorAll('.active').forEach((x) => x.classList.remove('active'));
-          row.classList.add('active');
-          picked = r;
-          preview.textContent = r.instrumental ? '（纯音乐）' : parseLrc(r.lrc).lines.map((l) => l.text).join('\n');
-          useBtn.disabled = false;
-        } },
+        const row = h('div', { class: 'result-row', onclick: () => pick(r, row) },
         h('div', { class: 'grow' }, h('div', { class: 'name' }, r.title), h('div', { class: 'desc' }, [r.artist, r.album, r.duration && fmtTime(r.duration)].filter(Boolean).join(' · '))),
         diff != null && Math.abs(diff) > 3 ? h('span', { class: 'badge' }, `${diff > 0 ? '+' : ''}${diff}s`) : null,
-        h('span', { class: `badge ${r.synced ? 'blue' : ''}` }, r.instrumental ? '纯音乐' : r.synced ? '逐行同步' : '纯文本'));
+        h('span', { class: 'badge' }, r.source),
+        r.synced != null || r.instrumental ? h('span', { class: `badge ${r.synced ? 'blue' : ''}` }, r.instrumental ? '纯音乐' : r.synced ? '逐行同步' : '纯文本') : null);
         return row;
       }));
     } catch (e) {
@@ -40,10 +35,34 @@ export function openLyricsSearch(track) {
     }
   }
 
+  // 网易云 / QQ / 酷狗的搜索结果不带歌词，选中时再取
+  async function pick(r, row) {
+    list.querySelectorAll('.active').forEach((x) => x.classList.remove('active'));
+    row.classList.add('active');
+    picked = null;
+    useBtn.disabled = true;
+    if (r.lrc == null) {
+      preview.textContent = '正在获取歌词…';
+      try {
+        r = { ...r, ...(await window.api.invoke('lyrics:fetch', r)) };
+      } catch (e) {
+        preview.textContent = `获取失败：${e.message}`;
+        return;
+      }
+      if (!row.classList.contains('active')) return; // 已经点了别的结果
+    }
+    if (!r.lrc?.trim() && !r.instrumental) { preview.textContent = '这条结果没有歌词，换一条试试'; return; }
+    picked = r;
+    const parsed = parseLrc(r.lrc);
+    if (r.trans) mergeTranslation(parsed, r.trans);
+    preview.textContent = r.instrumental ? '（纯音乐）' : parsed.lines.map((l) => (l.trans ? `${l.text}\n${l.trans}` : l.text)).join('\n');
+    useBtn.disabled = false;
+  }
+
   async function save() {
     const data = mode === 'paste'
-      ? { lrc: paste.value, source: '手动粘贴' }
-      : { lrc: picked.lrc, instrumental: picked.instrumental, source: 'LRCLIB', remoteId: picked.id };
+      ? { lrc: paste.value, trans: '', source: '手动粘贴' }
+      : { lrc: picked.lrc, trans: picked.trans || '', instrumental: !!picked.instrumental, source: picked.source, remoteId: `${picked.provider}:${picked.id}` };
     if (!data.lrc && !data.instrumental) return;
     await window.api.invoke('lyrics:save', track.id, data);
     emit('lyrics:changed', track.id);
@@ -66,7 +85,7 @@ export function openLyricsSearch(track) {
   const searchBox = h('div', {},
     h('div', { class: 'search-row' }, title, artist, h('button', { class: 'btn btn-primary', onclick: search }, icon('search', 15), '搜索')),
     list, preview,
-    h('div', { class: 'ai-note', style: { marginTop: '10px' } }, '歌词来自 LRCLIB 开放歌词库。'));
+    h('div', { class: 'ai-note', style: { marginTop: '10px' } }, '歌词来自网易云音乐、QQ 音乐、酷狗音乐和 LRCLIB 开放歌词库。'));
   const m = modal({
     title: '查找歌词',
     width: 620,
@@ -257,8 +276,9 @@ export function openSettings(section = 'library') {
     },
     lyrics() {
       return h('div', {}, h('div', { class: 'set-group' }, h('h4', {}, '歌词'),
-        row('自动在线查找歌词', '本地没有 .lrc 文件也没有内嵌歌词时，从 LRCLIB 查找并缓存。', switchCtl(s().lyrics.online, (v) => saveSettings({ lyrics: { online: v } }))),
-        row('歌词来源顺序', '手动选择的歌词 → 同名 .lrc 文件 → 文件内嵌歌词 → LRCLIB 在线歌词', null)),
+        row('自动在线查找歌词', '本地没有 .lrc 文件也没有内嵌歌词时，从网易云音乐、QQ 音乐、酷狗音乐、LRCLIB 一起查找，取最匹配的一份并缓存。', switchCtl(s().lyrics.online, (v) => saveSettings({ lyrics: { online: v } }))),
+        row('繁体歌词显示为简体', 'LRCLIB 等来源的中文歌词常是繁体，开启后统一转成简体显示。', switchCtl(s().lyrics.simplified, (v) => saveSettings({ lyrics: { simplified: v } }))),
+        row('歌词来源顺序', '手动选择的歌词 → 同名 .lrc 文件 → 文件内嵌歌词 → 在线歌词', null)),
       h('div', { class: 'set-group' }, h('h4', {}, '图片'),
         row('歌手图片', '在歌手页面从 Deezer 获取歌手照片并缓存。', switchCtl(s().lyrics.artistImages, (v) => saveSettings({ lyrics: { artistImages: v } }))),
         row('自动补全专辑封面', '播放到没有封面的专辑时，从 iTunes / Deezer 查找匹配度高的封面。也可以在右键菜单「查找封面」手动挑选。', switchCtl(s().lyrics.autoCover, (v) => saveSettings({ lyrics: { autoCover: v } })))));
@@ -380,7 +400,7 @@ export function openSettings(section = 'library') {
           notes,
           row('启动时自动检查更新', '有新版本时标题栏右上角会出现更新按钮', switchCtl(s().update?.autoCheck !== false, (v) => saveSettings({ update: { autoCheck: v } })))),
         h('div', { class: 'set-group' }, h('h4', {}, `听音 ${u().current || ''}`),
-        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析、AI 分类，并通过 MCP 开放给 Bot 控制。\n\n歌词：LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
+        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析、AI 分类，并通过 MCP 开放给 Bot 控制。\n\n歌词：网易云音乐、QQ 音乐、酷狗音乐、LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
     },
   };
 

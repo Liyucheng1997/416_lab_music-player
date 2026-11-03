@@ -41,18 +41,55 @@ bar.append(
 $('unlock').append(ico(LockOpen));
 $('unlock').onclick = () => window.api.send('dl:command', 'unlock');
 
-// 锁定时窗口忽略鼠标，但仍能收到 mousemove：移到解锁按钮附近时临时恢复点击
-document.addEventListener('mousemove', (e) => {
-  if (!style.locked) return;
-  document.body.classList.add('hover');
-  const r = $('unlock').getBoundingClientRect();
-  const over = e.clientX > r.left - 6 && e.clientX < r.right + 6 && e.clientY > r.top - 6 && e.clientY < r.bottom + 6;
-  window.api.send('dl:hover', over);
-});
+// 窗口平时忽略鼠标（点击穿透到下面的窗口），但仍能收到 mousemove。
+// 只有鼠标在「歌词文字」上时才接收点击并显示底板和工具条；底板显示后整块底板都算。
+// 锁定时只有解锁按钮能点。
+const frameEl = $('frame');
+let mouse = null;
+let over = null;
+let dragging = false;
+const inside = (el, pad) => {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && mouse.x > r.left - pad && mouse.x < r.right + pad && mouse.y > r.top - pad && mouse.y < r.bottom + pad;
+};
+function updateHover(force = false) {
+  if (!mouse) return;
+  const body = document.body;
+  let hit;
+  if (style.locked) {
+    body.classList.add('hover');
+    hit = inside($('unlock'), 6);
+  } else {
+    hit = dragging || (body.classList.contains('hover') ? inside(frameEl, 0) : inside(main, 8) || inside(sub, 8));
+    body.classList.toggle('hover', hit);
+  }
+  if (hit !== over || force) { over = hit; window.api.send('dl:hover', hit); }
+}
+document.addEventListener('mousemove', (e) => { mouse = { x: e.clientX, y: e.clientY }; updateHover(); if (dragging) window.api.send('dl:drag', 'move'); });
 document.addEventListener('mouseleave', () => {
+  if (dragging) return;
+  mouse = null;
   document.body.classList.remove('hover');
-  if (style.locked) window.api.send('dl:hover', false);
+  if (over !== false) { over = false; window.api.send('dl:hover', false); }
 });
+
+// 拖动底板移动窗口（不用 -webkit-app-region，那样拖动区域收不到鼠标事件，没法判断鼠标离开）
+frameEl.addEventListener('pointerdown', (e) => {
+  if (style.locked || e.button !== 0 || e.target.closest('button')) return;
+  dragging = true;
+  frameEl.setPointerCapture(e.pointerId);
+  document.body.classList.add('dragging');
+  window.api.send('dl:drag', 'start');
+});
+const endDrag = () => {
+  if (!dragging) return;
+  dragging = false;
+  document.body.classList.remove('dragging');
+  window.api.send('dl:drag', 'end');
+  updateHover();
+};
+frameEl.addEventListener('pointerup', endDrag);
+frameEl.addEventListener('pointercancel', endDrag);
 
 function applyStyle() {
   document.body.classList.toggle('locked', !!style.locked);
@@ -83,7 +120,8 @@ window.api.on('dl:update', (p) => {
   if (p.full) drawText();
   else if (playBtn.dataset.playing !== String(st.playing)) { playBtn.dataset.playing = String(st.playing); playBtn.replaceChildren(ico(st.playing ? Pause : Play)); }
 });
-window.api.on('dl:style', (s) => { style = s; applyStyle(); });
+// 样式变了（锁定 / 字号）命中区域也跟着变，重新告诉主进程
+window.api.on('dl:style', (s) => { style = s; applyStyle(); updateHover(true); });
 
 // 逐字填色：一行的填充时长不超过「字数 × 0.45 秒」，长间奏不会拖得很慢
 function frame() {

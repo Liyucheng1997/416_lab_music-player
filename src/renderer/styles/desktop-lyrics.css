@@ -13,19 +13,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: transparent;
 * { box-sizing: border-box; }
 button { font: inherit; border: 0; cursor: pointer; }
 
-.frame { position: absolute; inset: 6px; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 34px 24px 12px; transition: background 0.25s; -webkit-app-region: drag; }
-body:not(.locked) .frame:hover { background: rgba(0, 0, 0, 0.32); }
-body.locked .frame { -webkit-app-region: no-drag; }
+/* 底板只包住歌词本身，窗口其余透明部分鼠标穿透（见 desktop-lyrics.js 的命中检测） */
+body { display: flex; align-items: center; justify-content: center; }
+.frame { position: relative; min-width: 400px; max-width: calc(100% - 12px); border-radius: 20px; display: flex; flex-direction: column; align-items: center; padding: 42px 28px 12px; transition: background 0.25s; }
+body.hover:not(.locked) .frame { background: rgba(0, 0, 0, 0.32); cursor: grab; }
+body.dragging .frame { cursor: grabbing; }
 
-.bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 3px; border-radius: 99px; background: rgba(29, 29, 31, 0.86); opacity: 0; transition: opacity 0.2s; -webkit-app-region: no-drag; }
-body:not(.locked) .frame:hover .bar { opacity: 1; }
+.bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 3px; border-radius: 99px; background: rgba(29, 29, 31, 0.86); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+body.hover:not(.locked) .bar { opacity: 1; pointer-events: auto; }
 .bar button { width: 30px; height: 28px; border-radius: 99px; background: transparent; color: rgba(255, 255, 255, 0.85); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; transition: background 0.15s; }
 .bar button:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 .bar button.on { color: #0a84ff; }
 .bar .sep { width: 1px; margin: 6px 3px; background: rgba(255, 255, 255, 0.18); }
 .bar svg { display: block; }
 
-.unlock { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 34px; height: 30px; border-radius: 99px; background: rgba(29, 29, 31, 0.86); color: #fff; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; -webkit-app-region: no-drag; }
+.unlock { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 34px; height: 30px; border-radius: 99px; background: rgba(29, 29, 31, 0.86); color: #fff; display: none; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; }
 body.locked .unlock { display: flex; }
 body.locked.hover .unlock { opacity: 1; }
 
