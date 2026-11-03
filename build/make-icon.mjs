@@ -1,4 +1,4 @@
-// 生成应用图标：苹果蓝圆角方块 + 白色音符（纯色、无渐变），输出 build/icon.png
+// 生成应用图标：黑色圆角方块 + 白色音符（纯色、无渐变），输出 build/icon.png
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const SIZE = 256;
 const SS = 4; // 超采样抗锯齿
-const BLUE = [0, 113, 227];
+const BG = [0, 0, 0];
 
 const inRoundRect = (x, y, r) => {
   const cx = Math.min(Math.max(x, r), 1 - r);
@@ -40,9 +40,9 @@ for (let py = 0; py < SIZE; py++) {
     const n = SS * SS;
     const a = bg / n, w = bg ? fg / bg : 0;
     const o = py * (SIZE * 4 + 1) + 1 + px * 4;
-    raw[o] = Math.round(BLUE[0] + (255 - BLUE[0]) * w);
-    raw[o + 1] = Math.round(BLUE[1] + (255 - BLUE[1]) * w);
-    raw[o + 2] = Math.round(BLUE[2] + (255 - BLUE[2]) * w);
+    raw[o] = Math.round(BG[0] + (255 - BG[0]) * w);
+    raw[o + 1] = Math.round(BG[1] + (255 - BG[1]) * w);
+    raw[o + 2] = Math.round(BG[2] + (255 - BG[2]) * w);
     raw[o + 3] = Math.round(a * 255);
   }
 }
