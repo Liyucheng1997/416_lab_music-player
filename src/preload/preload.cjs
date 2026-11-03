@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const INVOKE = new Set([
   'lib:snapshot', 'lib:pickFolder', 'lib:addFolder', 'lib:removeFolder', 'lib:rescan', 'lib:update', 'lib:played', 'lib:duration', 'lib:reveal', 'lib:exists', 'lib:suggestions',
   'pl:create', 'pl:update', 'pl:delete', 'pl:import', 'pl:export',
-  'lyrics:get', 'lyrics:search', 'lyrics:save',
+  'lyrics:get', 'lyrics:search', 'lyrics:fetch', 'lyrics:save',
   'cover:search', 'cover:apply', 'cover:auto', 'cover:fillMissing', 'cover:pickFile', 'artist:image',
   'ai:cached', 'ai:cancel', 'ai:start',
   'tags:get', 'tags:start', 'tags:cancel',
@@ -12,7 +12,7 @@ const INVOKE = new Set([
   'update:state', 'update:check', 'update:install', 'update:releases',
   'settings:get', 'settings:set', 'settings:ffmpeg', 'settings:pickFfmpeg', 'shell:open',
 ]);
-const SEND = new Set(['dl:update', 'dl:command', 'dl:ready', 'dl:hover', 'np:state', 'mcp:reply']);
+const SEND = new Set(['dl:update', 'dl:command', 'dl:ready', 'dl:hover', 'dl:drag','np:state', 'mcp:reply']);
 const LISTEN = new Set(['lib:progress', 'lib:changed', 'player:command', 'dl:state', 'dl:resend', 'dl:update', 'dl:style', 'ai:delta', 'ai:done', 'ai:error', 'mcp:call', 'update:state']);
 
 contextBridge.exposeInMainWorld('api', {
