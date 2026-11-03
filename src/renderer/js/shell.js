@@ -89,6 +89,20 @@ export function initTitlebar() {
   settingsBtn.append(icon('settings', 17));
   settingsBtn.onclick = () => openSettings();
 
+  // 有新版本时标题栏出现更新按钮：点一下下载，下载完自动安装并重启
+  const updBtn = h('button', { class: 'btn btn-sm btn-primary update-pill', hidden: true, onclick: () => window.api.invoke('update:install') });
+  document.querySelector('.tb-actions').prepend(updBtn);
+  const drawUpdate = (u) => {
+    state.update = u;
+    emit('update', u);
+    const label = u.status === 'available' ? `更新到 ${u.version}` : u.status === 'downloading' ? `正在下载 ${u.percent || 0}%` : u.status === 'ready' ? '重启并更新' : '';
+    updBtn.hidden = !label;
+    updBtn.disabled = u.status === 'downloading';
+    clear(updBtn, label ? icon('download', 14) : null, label);
+  };
+  window.api.on('update:state', drawUpdate);
+  window.api.invoke('update:state').then(drawUpdate);
+
   const status = document.getElementById('scanStatus');
   window.api.on('lib:progress', (p) => {
     if (p.phase === 'covers') {
@@ -99,6 +113,16 @@ export function initTitlebar() {
       clear(status, h('span', { class: 'status ok' }, `封面补全完成：${p.total} 张专辑里找到 ${p.found} 张`));
       setTimeout(() => clear(status), 8000);
       window.dispatchEvent(new Event('tingyin:reload'));
+      return;
+    }
+    if (p.phase === 'classify') {
+      clear(status, h('span', { class: 'dot' }), `AI 正在分类 ${p.done}/${p.total}`);
+      return;
+    }
+    if (p.phase === 'classify-done') {
+      clear(status, p.error ? h('span', { class: 'status warn', title: p.error }, `AI 分类中断：${p.error.slice(0, 40)}`)
+        : h('span', { class: 'status ok' }, `AI 分类完成：${p.total - p.failed} 首${p.failed ? `，${p.failed} 首失败` : ''}`));
+      setTimeout(() => clear(status), 8000);
       return;
     }
     if (p.phase === 'done') {
@@ -119,7 +143,7 @@ export function initSidebar() {
   const item = (key, label, ic, arg = null, count = null) => {
     const active = state.view.name === key && (arg == null || state.view.arg === arg)
       || (key === 'albums' && state.view.name === 'album') || (key === 'artists' && state.view.name === 'artist')
-      || (key === 'genres' && state.view.name === 'genre') || (key === 'years' && state.view.name === 'year') || (key === 'folders' && state.view.name === 'folder');
+      || (key === 'genres' && state.view.name === 'genre') || (key === 'years' && state.view.name === 'year') || (key === 'folders' && state.view.name === 'folder') || (key === 'aitags' && state.view.name === 'aitag');
     return h('div', { class: `nav-item ${active ? 'active' : ''}`, onclick: () => navigate(key, arg) }, icon(ic, 18), h('span', { class: 'label' }, label),
       count != null ? h('span', { class: 'count' }, count) : null);
   };
@@ -145,6 +169,7 @@ export function initSidebar() {
         item('artists', '歌手', 'mic', null, d.artists.length || null),
         item('genres', '流派', 'tag'),
         item('years', '年代', 'calendar'),
+        item('aitags', 'AI 分类', 'wand'),
         item('folders', '文件夹', 'folder')),
       h('div', { class: 'nav-group' }, h('div', { class: 'nav-title' }, '收藏'),
         item('loved', '我喜欢', 'heart', null, loved || null),

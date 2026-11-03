@@ -1,4 +1,4 @@
-// 听音 · 主进程：窗口、本地媒体协议、资料库 / 歌词 / AI 的 IPC、桌面歌词窗口、托盘
+// 听音 · 主进程：窗口、本地媒体协议、资料库 / 歌词 / AI 的 IPC、桌面歌词窗口、托盘、MCP 服务、软件内更新
 import { app, BrowserWindow, ipcMain, protocol, net, dialog, shell, nativeImage, nativeTheme, Tray, Menu, screen, safeStorage } from 'electron';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -10,6 +10,10 @@ import { Online } from './online.js';
 import { AiService, DEFAULT_MODEL, describeAiError } from './ai.js';
 import { Transcoder } from './transcode.js';
 import { JsonStore } from './store.js';
+import { Classifier, DIMENSIONS } from './classify.js';
+import { McpServer, newToken } from './mcp.js';
+import { createTools, INSTRUCTIONS } from './mcp-tools.js';
+import { Updater } from './updater.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const RENDERER = path.join(ROOT, 'src/renderer');
@@ -39,6 +43,8 @@ const DEFAULT_SETTINGS = {
   lyrics: { online: true, autoCover: true, artistImages: true },
   desktopLyrics: { enabled: false, locked: false, fontSize: 34, showTrans: true, color: 'blue', bounds: null },
   ai: { apiKeyEnc: '', baseURL: '', model: DEFAULT_MODEL, effort: 'low', autoTimeline: true },
+  mcp: { enabled: false, port: 17890, lan: false, token: '' },
+  update: { autoCheck: true },
   window: null,
   session: null,
   ui: {},
@@ -46,7 +52,8 @@ const DEFAULT_SETTINGS = {
 
 const settings = new JsonStore(path.join(DATA, 'settings.json'), DEFAULT_SETTINGS);
 // 补齐新增的嵌套默认值
-for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
+for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai', 'mcp', 'update']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
+if (!settings.data.mcp.token) { settings.data.mcp.token = newToken(); settings.save(); }
 
 function apiKey() {
   const enc = settings.data.ai.apiKeyEnc;
@@ -101,6 +108,35 @@ const ai = new AiService({
   getSettings: () => ({ ai: { ...settings.data.ai, apiKey: apiKey() } }),
 });
 const transcoder = new Transcoder({ dir: DATA, getFfmpeg: () => settings.data.ffmpegPath });
+const classifier = new Classifier({
+  dir: DATA,
+  ai,
+  library,
+  onProgress: (p) => send('lib:progress', { ...p, phase: p.running ? 'classify' : 'classify-done' }),
+  onChange: () => send('lib:changed'),
+});
+
+// MCP 的播放指令转给界面执行
+const pendingCalls = new Map();
+let callSeq = 0;
+function callRenderer(cmd, args) {
+  if (!mainWin || mainWin.isDestroyed()) return Promise.reject(new Error('听音主窗口没有打开'));
+  const reqId = ++callSeq;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { pendingCalls.delete(reqId); reject(new Error('播放器没有响应')); }, 10000);
+    pendingCalls.set(reqId, { resolve, reject, timer });
+    mainWin.webContents.send('mcp:call', { reqId, cmd, args });
+  });
+}
+const mcp = new McpServer({
+  dir: DATA,
+  version: app.getVersion(),
+  instructions: INSTRUCTIONS,
+  getConfig: () => settings.data.mcp,
+  tools: createTools({ library, classifier, online, callRenderer, onlineLyrics: () => settings.data.lyrics.online }),
+});
+const updater = new Updater({ onState: (st) => send('update:state', st) });
+updater.beforeQuit = () => { quitting = true; };
 
 // ---------------- 协议 ----------------
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
@@ -415,6 +451,31 @@ function registerIpc() {
     return true;
   });
 
+  handle('tags:get', () => ({ tags: classifier.tags, dims: DIMENSIONS, status: classifier.status() }));
+  handle('tags:start', (opts) => classifier.start(opts || {}));
+  handle('tags:cancel', () => { classifier.cancel(); return classifier.status(); });
+
+  handle('mcp:status', () => mcp.status());
+  handle('mcp:set', async (patch) => {
+    if (patch.resetToken) patch = { ...patch, token: newToken() };
+    delete patch.resetToken;
+    if (patch.port != null) patch.port = Math.max(1024, Math.min(65535, Math.round(Number(patch.port)) || 17890));
+    Object.assign(settings.data.mcp, patch);
+    settings.save();
+    return mcp.restart();
+  });
+  handle('mcp:stdioCommand', () => ({
+    // 打包后用自带的 Electron 当 Node 跑桥接脚本，不需要另装 Node.js
+    command: process.execPath,
+    args: app.isPackaged ? [path.join(process.resourcesPath, 'app.asar', 'src', 'mcp-stdio.mjs')] : [path.join(ROOT, 'src', 'mcp-stdio.mjs')],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  }));
+
+  handle('update:state', () => updater.state);
+  handle('update:check', () => updater.check());
+  handle('update:install', () => updater.install());
+  handle('update:releases', () => updater.openReleases());
+
   handle('settings:get', () => publicSettings());
   handle('settings:set', (patch) => {
     if (patch.ai && 'apiKey' in patch.ai) {
@@ -445,6 +506,14 @@ function registerIpc() {
     if (lyricWin && !lyricWin.isDestroyed()) lyricWin.webContents.send('dl:update', payload);
   });
   ipcMain.on('np:state', (_e, s) => { nowPlaying = s; updateTray(); });
+  ipcMain.on('mcp:reply', (_e, { reqId, result, error }) => {
+    const p = pendingCalls.get(reqId);
+    if (!p) return;
+    pendingCalls.delete(reqId);
+    clearTimeout(p.timer);
+    if (error) p.reject(new Error(error));
+    else p.resolve(result);
+  });
   // 桌面歌词 → 主界面
   ipcMain.on('dl:command', (_e, cmd) => {
     if (cmd === 'close') setDesktopLyrics(false);
@@ -491,6 +560,8 @@ app.whenReady().then(() => {
   library.watchAll();
   // 启动后增量扫描一次，把离线期间的变化补上
   setTimeout(() => library.folders.length && library.scan(), 2500);
+  mcp.restart();
+  if (settings.data.update.autoCheck) setTimeout(() => updater.check(), 8000);
 });
 
 nativeTheme.on('updated', applyTitleBarTheme);
@@ -500,6 +571,8 @@ app.on('before-quit', () => {
   settings.flushSync();
   library.store.data.tracks = [...library.tracks.values()];
   library.store.flushSync();
+  classifier.flushSync();
+  mcp.stop();
 });
 
 app.on('window-all-closed', () => {

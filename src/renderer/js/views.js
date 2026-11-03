@@ -145,6 +145,10 @@ export function songTable(tracks, opts = {}) {
   const ro = new ResizeObserver(schedule);
   ro.observe(body);
 
+  const refreshSelection = () => {
+    for (const row of inner.children) row.classList.toggle('selected', selected.has(list[Number(row.dataset.i)]?.id));
+  };
+
   const indexFromEvent = (e) => {
     const row = e.target.closest('.trow');
     return row ? Number(row.dataset.i) : -1;
@@ -168,9 +172,11 @@ export function songTable(tracks, opts = {}) {
       selected.add(id);
       anchor = i;
     }
-    draw();
+    // 只改选中样式，不重建行：重建会让按下的元素脱离文档，浏览器就不再触发 click / dblclick
+    refreshSelection();
   });
   body.addEventListener('dblclick', (e) => {
+    if (e.target.closest('a, button')) return;
     const i = indexFromEvent(e);
     if (i >= 0) playList(ids(), i);
   });
@@ -188,7 +194,7 @@ export function songTable(tracks, opts = {}) {
   body.addEventListener('dragstart', (e) => {
     const i = indexFromEvent(e);
     if (i < 0) return;
-    if (!selected.has(list[i].id)) { selected.clear(); selected.add(list[i].id); draw(); }
+    if (!selected.has(list[i].id)) { selected.clear(); selected.add(list[i].id); refreshSelection(); }
     e.dataTransfer.setData('application/x-tingyin-tracks', JSON.stringify([...selected]));
     e.dataTransfer.effectAllowed = 'copy';
   });
@@ -199,7 +205,7 @@ export function songTable(tracks, opts = {}) {
     } else if (e.key === 'a' && e.ctrlKey) {
       e.preventDefault();
       list.forEach((t) => selected.add(t.id));
-      draw();
+      refreshSelection();
     } else if (e.key === 'Delete' && playlistId && selected.size) {
       removeFromPlaylist(playlistId, [...selected], opts.onRemoved);
     }
@@ -462,6 +468,53 @@ function groupDetail(kind, name, eyebrow) {
   return h('div', { class: 'page' }, pageHead({ eyebrow, title: name, sub: summary(list), actions: playButtons(() => list.map((x) => x.id)) }), t.el);
 }
 
+// ---------------- AI 分类 ----------------
+const tagKey = (dim, name) => `${dim}\u0001${name}`;
+
+function aiTagsView() {
+  const dims = state.tagDims;
+  const dimKeys = Object.keys(dims);
+  let dim = uiPref('aiDim', 'style');
+  if (!dims[dim]) dim = dimKeys[0];
+  const groups = derived().ai[dim] || [];
+  const st = state.tagStatus || { total: state.tracks.length, done: 0, running: false };
+  const left = Math.max(0, st.total - st.done);
+  const seg = h('div', { class: 'seg' }, dimKeys.map((k) =>
+    h('button', { class: dim === k ? 'active' : '', onclick: () => { setUiPref('aiDim', k); render(); } }, dims[k].label)));
+  const start = async (all) => {
+    if (!state.settings.ai.hasKey && !state.settings.ai.envKey) { toast('先在 设置 → AI 赏析 里填写 API Key', 'error'); return; }
+    state.tagStatus = await window.api.invoke('tags:start', { all });
+    toast(`开始为 ${all ? st.total : left} 首歌分类，在后台进行`);
+    render();
+  };
+  const runBtn = st.running
+    ? h('button', { class: 'btn', onclick: async () => { await window.api.invoke('tags:cancel'); toast('已停止分类'); } }, icon('stop', 14), '停止')
+    : left ? h('button', { class: 'btn btn-primary', title: '只处理还没有分类的歌', onclick: () => start(false) }, icon('wand', 15), st.done ? `分类剩下的 ${left} 首` : '开始 AI 分类')
+      : h('button', { class: 'btn', onclick: async () => { if (await confirmBox({ title: '重新分类', message: `把全部 ${st.total} 首歌重新交给 AI 分类？会消耗 API 额度。`, okText: '重新分类' })) start(true); } }, icon('refresh', 15), '重新分类');
+  const sub = st.running ? `正在分类… 本次 ${st.progress?.done || 0} / ${st.progress?.total || left} 首` : `已分类 ${st.done} / ${st.total} 首 · 按${dims[dim]?.label || ''}分成 ${groups.length} 类`;
+  const body = groups.length
+    ? h('div', { class: 'grid' }, groups.map((g) => {
+      const c = mosaic(g.coverIds);
+      c.append(h('button', { class: 'play-fab', onclick: (e) => { e.stopPropagation(); playList(g.tracks.map((t) => t.id), 0, { shuffle: true }); } }, icon('play', 18)));
+      return h('div', { class: 'tile', onclick: () => navigate('aitag', tagKey(dim, g.name)) }, c,
+        h('div', { class: 'tile-name' }, g.name), h('div', { class: 'tile-sub' }, `${g.tracks.length} 首`));
+    }))
+    : h('div', { class: 'empty' }, icon('wand', 34, { 'stroke-width': 1.4 }),
+      'AI 会根据歌名、歌手、专辑和所在文件夹，把歌按风格、语言、情绪和场景分好类。', h('br'), '结果只保存在听音里，不会改动、移动你的音乐文件。');
+  return h('div', { class: 'page' },
+    pageHead({ eyebrow: 'AI Categories', title: 'AI 分类', sub, actions: [runBtn, seg] }),
+    h('div', { class: 'page-scroll' }, body));
+}
+
+function aiTagView(key) {
+  const [dim, name] = String(key).split('\u0001');
+  const g = derived().ai[dim]?.find((x) => x.name === name);
+  if (!g) return emptyPage('这个分类已经没有歌曲了');
+  const list = [...g.tracks].sort((a, b) => compare(a.artist, b.artist) || compare(a.album, b.album) || (a.trackNo || 0) - (b.trackNo || 0));
+  const t = songTable(list, { sortKey: 'sort:aitag' });
+  return h('div', { class: 'page' }, pageHead({ eyebrow: `AI · ${state.tagDims[dim]?.label || ''}`, title: name, sub: summary(list), actions: playButtons(() => list.map((x) => x.id)) }), t.el);
+}
+
 function foldersView() {
   const dirs = new Map();
   for (const t of state.tracks) {
@@ -571,6 +624,8 @@ const VIEWS = {
   genre: (n) => groupDetail('genres', n, 'Genre'),
   years: () => groupView('years', '年代', 'Decades'),
   year: (n) => groupDetail('years', n, 'Decade'),
+  aitags: aiTagsView,
+  aitag: aiTagView,
   folders: foldersView,
   folder: folderView,
   loved: () => smartView('loved'),

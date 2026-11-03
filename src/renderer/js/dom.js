@@ -59,6 +59,7 @@ import Library from '../lucide/icons/square-library.mjs';
 import Type from '../lucide/icons/type.mjs';
 import Wand from '../lucide/icons/wand-sparkles.mjs';
 import Calendar from '../lucide/icons/calendar.mjs';
+import Bot from '../lucide/icons/bot.mjs';
 
 const ICONS = {
   play: Play, pause: Pause, prev: SkipBack, next: SkipForward, shuffle: Shuffle, repeat: Repeat, repeat1: Repeat1,
@@ -69,7 +70,7 @@ const ICONS = {
   lock: Lock, unlock: LockOpen, captions: Captions, expand: Maximize, collapse: Minimize, send: Send, stop: Square,
   recent: Recent, trending: Trending, queue: ListOrdered, translate: Languages, edit: Pencil, download: Download,
   upload: Upload, monitor: Monitor, wave: AudioLines, sort: ArrowUpDown, file: FileMusic, library: Library, type: Type,
-  wand: Wand, calendar: Calendar,
+  wand: Wand, calendar: Calendar, bot: Bot,
 };
 
 export function icon(name, size = 18, extra = {}) {

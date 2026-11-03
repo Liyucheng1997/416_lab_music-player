@@ -27,6 +27,11 @@ img { user-select: none; -webkit-user-drag: none; }
 .tb-round { width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--panel); box-shadow: var(--shadow-card); color: var(--text-2); display: flex; align-items: center; justify-content: center; transition: box-shadow 0.2s, color 0.15s, transform 0.15s; }
 .tb-round:hover { box-shadow: var(--shadow-lift); color: var(--text); }
 .tb-round:active { transform: scale(0.94); }
+.update-pill { align-self: center; -webkit-app-region: no-drag; }
+.update-pill[hidden] { display: none; }
+.mcp-code { font: 12px/1.55 ui-monospace, 'Cascadia Mono', Consolas, monospace; background: var(--panel-2, var(--bg)); border-radius: 12px; padding: 12px 14px; margin: 6px 0 4px; white-space: pre-wrap; word-break: break-all; user-select: text; color: var(--text-2); max-height: 220px; overflow: auto; }
+.mcp-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.mcp-tools span { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--panel-2, var(--bg)); color: var(--text-2); }
 
 /* ---------- 主体 ---------- */
 .body { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 12px 12px 0; }

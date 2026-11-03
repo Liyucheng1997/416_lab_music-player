@@ -20,6 +20,10 @@ export const state = {
   scanning: false,
   view: { name: 'songs', arg: null },
   search: '',
+  // AI 分类：tags[id] = { style, lang, mood: [], scene: [] }；dims 是分类表
+  tags: {},
+  tagDims: {},
+  tagStatus: null,
 };
 
 let derivedCache = null;
@@ -37,6 +41,10 @@ export async function loadLibrary() {
   state.playlists = snap.playlists;
   state.folders = snap.folders;
   state.scanning = snap.scanning;
+  const tg = await window.api.invoke('tags:get');
+  state.tags = tg.tags;
+  state.tagDims = tg.dims;
+  state.tagStatus = tg.status;
   derivedCache = null;
   emit('library');
 }
@@ -99,19 +107,28 @@ export function derived() {
     .map(([name, list]) => ({ name, tracks: list, coverIds: [...new Set(list.map((t) => t.coverId).filter(Boolean))].slice(0, 4) }))
     .sort((a, b) => compare(b.name, a.name));
 
-  derivedCache = { albums, artists, genres, years };
+  const ai = {};
+  for (const dim of Object.keys(state.tagDims)) {
+    const order = state.tagDims[dim].values;
+    ai[dim] = [...groupBy(tracks, (t) => state.tags[t.id]?.[dim] || null).entries()]
+      .map(([name, list]) => ({ name, tracks: list, coverIds: [...new Set(list.map((t) => t.coverId).filter(Boolean))].slice(0, 4) }))
+      .sort((a, b) => b.tracks.length - a.tracks.length || order.indexOf(a.name) - order.indexOf(b.name));
+  }
+
+  derivedCache = { albums, artists, genres, years, ai };
   return derivedCache;
 }
 
 export function invalidate() { derivedCache = null; }
 
-// 搜索：空格分隔的多个关键词都要命中（标题 / 歌手 / 专辑 / 流派 / 文件名）
+// 搜索：空格分隔的多个关键词都要命中（标题 / 歌手 / 专辑 / 流派 / 文件名 / AI 分类）
 export function matchSearch(list, q) {
   q = q.trim().toLowerCase();
   if (!q) return list;
   const words = q.split(/\s+/);
   return list.filter((t) => {
-    const hay = `${t.title}\u0001${t.artist}\u0001${t.album}\u0001${t.genre}\u0001${t.composer}\u0001${t.path}`.toLowerCase();
+    const tg = state.tags[t.id];
+    const hay = `${t.title}\u0001${t.artist}\u0001${t.album}\u0001${t.genre}\u0001${t.composer}\u0001${t.path}${tg ? `\u0001${tg.style}\u0001${tg.lang}\u0001${tg.mood.join('\u0001')}\u0001${tg.scene.join('\u0001')}` : ''}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

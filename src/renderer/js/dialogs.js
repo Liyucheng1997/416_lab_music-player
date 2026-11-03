@@ -1,6 +1,6 @@
 // 对话框：查找歌词、查找封面、设置、均衡器
 import { h, icon, clear, fmtTime } from './dom.js';
-import { state, emit, saveSettings } from './store.js';
+import { state, emit, on, saveSettings } from './store.js';
 import { modal, toast } from './ui.js';
 import { EQ_FREQS, EQ_PRESETS, applyEq } from './player.js';
 import { parseLrc } from './lrc.js';
@@ -182,6 +182,7 @@ const SECTIONS = [
   ['lyrics', '歌词与封面', 'mic'],
   ['desktop', '桌面歌词', 'captions'],
   ['ai', 'AI 赏析', 'sparkles'],
+  ['bot', 'Bot 接入', 'bot'],
   ['look', '外观', 'sun'],
   ['about', '关于', 'disc'],
 ];
@@ -301,13 +302,85 @@ export function openSettings(section = 'library') {
         h('div', { class: 'set-group' }, h('h4', {}, '实时赏析'),
           row('切歌时自动生成', '打开 AI 赏析后，每换一首歌自动生成逐段解读与整体赏析（会消耗 API 额度，结果会缓存）。', switchCtl(ai.autoTimeline, (v) => saveSettings({ ai: { autoTimeline: v } })))));
     },
+    bot() {
+      const m = s().mcp || {};
+      const st = h('span', { class: 'status' }, '检测中…');
+      const info = h('div', {});
+      const port = h('input', { class: 'input', type: 'number', min: 1024, max: 65535, value: m.port || 17890, style: { width: '110px' } });
+      const apply = async (patch) => {
+        const r = await window.api.invoke('mcp:set', patch);
+        state.settings.mcp = { ...state.settings.mcp, ...patch, token: r.token, port: r.port };
+        draw(r);
+      };
+      const copy = (text, what) => { navigator.clipboard.writeText(text); toast(`已复制${what}`, 'success'); };
+      const draw = async (r) => {
+        st.className = `status ${r.running ? 'ok' : r.enabled ? 'warn' : ''}`;
+        st.textContent = r.running ? '运行中' : r.enabled ? (r.error || '未启动') : '已关闭';
+        if (!r.running) return clear(info);
+        const stdio = await window.api.invoke('mcp:stdioCommand');
+        const httpConf = JSON.stringify({ mcpServers: { tingyin: { type: 'http', url: r.url, headers: { Authorization: `Bearer ${r.token}` } } } }, null, 2);
+        const stdioConf = JSON.stringify({ mcpServers: { tingyin: { command: stdio.command, args: stdio.args, env: stdio.env } } }, null, 2);
+        clear(info,
+          row('HTTP 地址', '支持 Streamable HTTP 的客户端直接填这个地址，带上下面的令牌。', h('button', { class: 'btn btn-sm', onclick: () => copy(r.url, '地址') }, '复制')),
+          h('div', { class: 'mcp-code' }, r.lan ? `${r.url}
+局域网内其他设备：把 127.0.0.1 换成这台电脑的局域网 IP` : r.url),
+          row('访问令牌', '请求头 Authorization: Bearer <令牌>，或在地址后加 ?token=<令牌>。令牌泄露时点「重新生成」。',
+            h('div', { style: { display: 'flex', gap: '6px' } },
+              h('button', { class: 'btn btn-sm', onclick: () => copy(r.token, '令牌') }, '复制'),
+              h('button', { class: 'btn btn-sm', onclick: () => apply({ resetToken: true }) }, '重新生成'))),
+          row('HTTP 配置', '适用于 Claude Code、Cursor 以及多数 Bot 框架', h('button', { class: 'btn btn-sm', onclick: () => copy(httpConf, ' HTTP 配置') }, '复制')),
+          h('div', { class: 'mcp-code' }, httpConf),
+          row('stdio 配置', '只支持命令行方式的客户端用这个（Claude Desktop 等）；听音没开时会自动启动它。', h('button', { class: 'btn btn-sm', onclick: () => copy(stdioConf, ' stdio 配置') }, '复制')),
+          h('div', { class: 'mcp-code' }, stdioConf));
+      };
+      window.api.invoke('mcp:status').then(draw);
+      const tools = ['now_playing', 'player_control', 'search_tracks', 'play', 'add_to_queue', 'get_queue', 'set_volume', 'seek', 'set_play_mode', 'set_loved', 'list_playlists', 'list_categories', 'get_lyrics', 'classify_library'];
+      return h('div', {},
+        h('div', { class: 'set-group' }, h('h4', {}, 'MCP 服务'),
+          row('开启 MCP 服务', '让你的 Bot / AI 助手通过 Model Context Protocol 搜歌、点歌、切歌、调音量、看歌词。', h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, st, switchCtl(m.enabled, (v) => apply({ enabled: v })))),
+          row('端口', '默认 17890，被占用时换一个', h('div', { style: { display: 'flex', gap: '6px' } }, port, h('button', { class: 'btn btn-sm', onclick: () => apply({ port: Number(port.value) }) }, '应用'))),
+          row('允许局域网访问', '关闭时只有本机程序能连；打开后同一局域网的设备凭令牌也能控制。', switchCtl(m.lan, (v) => apply({ lan: v }))),
+          info),
+        h('div', { class: 'set-group' }, h('h4', {}, '提供的工具'), h('div', { class: 'mcp-tools' }, tools.map((t) => h('span', {}, t))),
+          h('p', { class: 'ai-note', style: { marginTop: '10px' } }, '例：对 Bot 说「放点适合睡前听的粤语歌」，它会调用 play {"scene":"睡前","lang":"粤语"}。')));
+    },
     look() {
       return h('div', {}, h('div', { class: 'set-group' }, h('h4', {}, '外观'),
         row('主题', null, segCtl([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']], s().theme, (v) => saveSettings({ theme: v })))));
     },
     about() {
-      return h('div', {}, h('div', { class: 'set-group' }, h('h4', {}, '听音 1.0.0'),
-        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析。\n\n歌词：LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
+      const u = () => state.update || {};
+      const stText = h('span', { class: 'status' });
+      const btn = h('button', { class: 'btn btn-sm btn-primary' });
+      const notes = h('div', {});
+      const draw = () => {
+        const x = u();
+        const map = {
+          checking: ['正在检查…', ''], latest: ['已是最新版本', 'ok'], available: [`发现新版本 ${x.version}`, 'warn'],
+          downloading: [`正在下载 ${x.percent || 0}%`, 'warn'], ready: ['下载完成', 'ok'], error: [x.error, 'warn'], unsupported: [x.error, 'warn'],
+        };
+        const [t, cls] = map[x.status] || ['', ''];
+        stText.className = `status ${cls}`;
+        stText.textContent = t || '';
+        stText.hidden = !t;
+        const action = x.status === 'available' ? ['一键更新', () => window.api.invoke('update:install')]
+          : x.status === 'ready' ? ['重启并更新', () => window.api.invoke('update:install')]
+            : x.status === 'unsupported' && x.portable ? ['打开下载页', () => window.api.invoke('update:releases')]
+              : ['检查更新', () => window.api.invoke('update:check')];
+        btn.textContent = action[0];
+        btn.onclick = action[1];
+        btn.disabled = ['checking', 'downloading'].includes(x.status);
+        clear(notes, x.notes && ['available', 'downloading', 'ready'].includes(x.status) ? h('div', { class: 'mcp-code' }, x.notes) : null);
+      };
+      draw();
+      const off = on('update', () => { if (stText.isConnected) draw(); else off(); });
+      return h('div', {},
+        h('div', { class: 'set-group' }, h('h4', {}, '软件更新'),
+          row(`当前版本 ${u().current || ''}`, '新版本发布在 GitHub，点「一键更新」会下载并静默安装，完成后自动重启，设置和资料库都会保留。', h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, stText, btn)),
+          notes,
+          row('启动时自动检查更新', '有新版本时标题栏右上角会出现更新按钮', switchCtl(s().update?.autoCheck !== false, (v) => saveSettings({ update: { autoCheck: v } })))),
+        h('div', { class: 'set-group' }, h('h4', {}, `听音 ${u().current || ''}`),
+        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析、AI 分类，并通过 MCP 开放给 Bot 控制。\n\n歌词：LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
     },
   };
 

@@ -7,6 +7,7 @@ import { initSide } from './side.js';
 import { initAi } from './ai-ctl.js';
 import { debounce } from './dom.js';
 import './lyrics-ctl.js';
+import './remote.js';
 
 const media = matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
@@ -53,6 +54,13 @@ const reload = debounce(async () => {
 window.api.on('lib:changed', reload);
 window.addEventListener('tingyin:reload', reload);
 on('scan', () => render());
+// AI 分类进度：更新计数，停在 AI 分类页时刷新（完成后主进程会发 lib:changed 整体重载）
+const redrawTags = debounce(() => { if (state.view.name === 'aitags') render(); }, 800);
+window.api.on('lib:progress', (p) => {
+  if (p.phase !== 'classify' && p.phase !== 'classify-done') return;
+  state.tagStatus = { ...state.tagStatus, running: p.phase === 'classify', progress: p };
+  redrawTags();
+});
 on('playlists', () => { if (state.view.name === 'playlist') render(); });
 on('loved', () => { if (state.view.name === 'loved') render(); });
 

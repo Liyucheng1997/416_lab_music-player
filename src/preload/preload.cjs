@@ -7,10 +7,13 @@ const INVOKE = new Set([
   'lyrics:get', 'lyrics:search', 'lyrics:save',
   'cover:search', 'cover:apply', 'cover:auto', 'cover:fillMissing', 'cover:pickFile', 'artist:image',
   'ai:cached', 'ai:cancel', 'ai:start',
+  'tags:get', 'tags:start', 'tags:cancel',
+  'mcp:status', 'mcp:set', 'mcp:stdioCommand',
+  'update:state', 'update:check', 'update:install', 'update:releases',
   'settings:get', 'settings:set', 'settings:ffmpeg', 'settings:pickFfmpeg', 'shell:open',
 ]);
-const SEND = new Set(['dl:update', 'dl:command', 'dl:ready', 'dl:hover', 'np:state']);
-const LISTEN = new Set(['lib:progress', 'lib:changed', 'player:command', 'dl:state', 'dl:resend', 'dl:update', 'dl:style', 'ai:delta', 'ai:done', 'ai:error']);
+const SEND = new Set(['dl:update', 'dl:command', 'dl:ready', 'dl:hover', 'np:state', 'mcp:reply']);
+const LISTEN = new Set(['lib:progress', 'lib:changed', 'player:command', 'dl:state', 'dl:resend', 'dl:update', 'dl:style', 'ai:delta', 'ai:done', 'ai:error', 'mcp:call', 'update:state']);
 
 contextBridge.exposeInMainWorld('api', {
   invoke: (ch, ...args) => (INVOKE.has(ch) ? ipcRenderer.invoke(ch, ...args) : Promise.reject(new Error(`blocked: ${ch}`))),
