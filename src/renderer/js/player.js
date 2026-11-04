@@ -27,6 +27,11 @@ let preamp = null;
 let fader = null;
 export let analyser = null;
 
+// 实际生效的均衡器设置：默认是设置里的 eq，AI 调音开启「按类型自动切换」时由 tune.js 接管
+let eqSource = () => state.settings.eq;
+export function setEqSource(fn) { eqSource = fn; refreshEq(); }
+export function refreshEq() { if (state.settings) applyEq(eqSource()); }
+
 export const player = {
   queue: [],
   original: [],
@@ -70,7 +75,7 @@ function ensureGraph() {
   let node = src.connect(preamp);
   for (const f of filters) node = node.connect(f);
   node.connect(fader).connect(analyser).connect(ctx.destination);
-  applyEq(state.settings.eq);
+  applyEq(eqSource());
 }
 
 export function applyEq(eq) {

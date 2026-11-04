@@ -76,6 +76,76 @@ const TRANSLATE_SCHEMA = {
   additionalProperties: false,
 };
 
+// ---------- AI 调音：按歌曲类型和播放设备推荐均衡器曲线与设置 ----------
+export const EQ_FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+
+const TUNE_SYSTEM = `你是「听音」音乐播放器里的调音师，熟悉各类耳机、音箱的声音特点，也熟悉不同音乐风格的混音习惯。你要根据用户的播放设备和听的音乐类型，给出均衡器曲线和让声音更好听的设置建议。
+
+播放器的均衡器：
+- 10 段，中心频率依次是 ${EQ_FREQS.map((f) => (f >= 1000 ? `${f / 1000}kHz` : `${f}Hz`)).join('、')}；31Hz 是低架、16kHz 是高架，其余是 Q≈1.1 的峰值滤波。
+- 每段增益 -12 到 +12 dB，步长 0.5。前级增益 preamp 也是 -12 到 +12 dB。
+- 播放器会按最大提升量自动压低前级（约 0.6 倍），防止削波；preamp 一般给 0，需要额外留余量时给负值。
+
+调音原则：
+- 宁可温和，不要夸张。大多数频段控制在 ±6 dB 以内，相邻频段不要忽高忽低（不超过 4 dB 的落差），曲线要平滑。
+- 先补设备的短板、再顺着音乐风格微调。设备本身放不出来的频段不要硬推（例如笔记本扬声器、手机外放、小音箱在 31/62Hz 几乎没有输出，提升只会浪费动态余量、带来破音，应该持平或衰减，改为在 100~250Hz 适度增加来营造"有低音"的感觉）。
+- 认识这款设备型号时，按你对它频响特点的了解来补偿（比如低频过量、3~6kHz 齿音刺耳、高频滚降）；不认识就按设备类型的常见特点推测，并在说明里讲清楚是推测。不要编造参数和测量数据。
+- 音量较低时人耳对低频和高频不敏感，可以适度做响度补偿；音量很高时要更克制。
+- 用户写了偏好时优先满足，但不要为了满足偏好牺牲清晰度。
+
+写作要求：一律用简体中文，具体、口语化，说清楚"为什么这样调、听起来会有什么变化"。不要使用 emoji。`;
+
+const tuneSchema = (keys) => ({
+  type: 'object',
+  properties: {
+    device: { type: 'string', description: '对这个播放设备声音特点的判断，以及调音的总体思路，80 到 160 字' },
+    profiles: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', enum: keys, description: '对应哪一类歌曲' },
+          name: { type: 'string', description: '这条曲线的名字，2 到 8 个字，例如「人声透亮」「温暖低频」' },
+          preamp: { type: 'number' },
+          bands: { type: 'array', items: { type: 'number' }, description: `10 个数，依次对应 ${EQ_FREQS.join('/')} Hz 的增益(dB)` },
+          why: { type: 'string', description: '为什么这样调、听感变化，40 到 100 字' },
+        },
+        required: ['key', 'name', 'preamp', 'bands', 'why'],
+        additionalProperties: false,
+      },
+    },
+    tips: {
+      type: 'array',
+      description: '均衡器以外让声音更好听的建议，3 到 5 条：系统或设备侧的设置、音量、摆放位置、蓝牙编码、音源格式等',
+      items: {
+        type: 'object',
+        properties: { title: { type: 'string', description: '不超过 12 个字' }, detail: { type: 'string', description: '具体怎么做，30 到 80 字' } },
+        required: ['title', 'detail'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['device', 'profiles', 'tips'],
+  additionalProperties: false,
+});
+
+const half = (x, lo, hi) => Math.max(lo, Math.min(hi, Math.round((Number(x) || 0) * 2) / 2));
+
+export function normalizeProfile(p) {
+  const bands = EQ_FREQS.map((_, i) => half(p?.bands?.[i], -12, 12));
+  return { key: String(p?.key || '默认'), name: String(p?.name || 'AI 推荐').slice(0, 12), preamp: half(p?.preamp, -12, 12), bands, why: String(p?.why || '') };
+}
+
+function deviceCard(device) {
+  const rows = [
+    `设备类型：${device?.type || '未说明'}`,
+    device?.model && `型号 / 名称：${device.model}`,
+    device?.label && `系统里的输出设备名：${device.label}`,
+    device?.volume != null && `播放器音量：${Math.round(device.volume * 100)}%`,
+  ];
+  return rows.filter(Boolean).join('\n');
+}
+
 export class AiService {
   constructor({ dir, getSettings }) {
     this.cacheDir = path.join(dir, 'ai');
@@ -178,6 +248,35 @@ export class AiService {
     const map = {};
     for (const x of JSON.parse(raw).lines || []) if (x.t) map[x.i] = x.t;
     return map;
+  }
+
+  // mode = 'now'：只为正在播放的这首歌给一条曲线；'library'：为资料库里的主要类型各给一条，外加「默认」
+  async tune(reqId, { mode, track, tags, groups, device, wish }) {
+    let keys;
+    let music;
+    if (mode === 'now' && track) {
+      keys = ['当前歌曲'];
+      const tg = tags ? [tags.style && `风格：${tags.style}`, tags.lang && `语言：${tags.lang}`, tags.mood?.length && `情绪：${tags.mood.join('、')}`].filter(Boolean).join('\n') : '';
+      music = `只为下面这首歌调一条曲线（key 填「当前歌曲」）：\n${songCard(track)}${tg ? `\n${tg}` : ''}`;
+    } else {
+      const list = (groups || []).slice(0, 10);
+      keys = [...list.map((g) => g.key), '默认'];
+      music = `用户资料库里主要的歌曲类型（按数量排序）：\n${list.map((g) => `- ${g.key}：${g.count} 首${g.artists?.length ? `，常听：${g.artists.join('、')}` : ''}`).join('\n')}\n\n请为上面每一类各调一条曲线（key 用类型名原样填写），另外给一条「默认」曲线，用于不属于这些类型的歌。播放器会在切歌时按歌曲类型自动切换曲线，所以同一设备下各条曲线的整体响度要接近，切换时不要忽大忽小。`;
+    }
+    const raw = await this.run(reqId, {
+      system: TUNE_SYSTEM,
+      format: tuneSchema(keys),
+      maxTokens: 16000,
+      messages: [{
+        role: 'user',
+        content: `播放设备：\n${deviceCard(device)}\n\n${music}${wish ? `\n\n用户的偏好：${wish}` : ''}`,
+      }],
+    });
+    const data = JSON.parse(raw);
+    const seen = new Set();
+    const profiles = (data.profiles || []).map(normalizeProfile).filter((p) => keys.includes(p.key) && !seen.has(p.key) && seen.add(p.key));
+    if (!profiles.length) throw new SyntaxError('no profiles');
+    return { device: String(data.device || ''), profiles, tips: (data.tips || []).slice(0, 6) };
   }
 
   async chat(reqId, { track, lines, history }, onText) {

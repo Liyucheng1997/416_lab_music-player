@@ -1,6 +1,7 @@
 // 入口：加载设置与资料库，挂载各模块，绑定快捷键
 import { state, on, emit, loadLibrary } from './store.js';
-import { player, toggle, next, prev, setVolume, seek, applyEq, restoreSession } from './player.js';
+import { player, toggle, next, prev, setVolume, seek, refreshEq, restoreSession } from './player.js';
+import { initTune } from './tune.js';
 import { navigate, render, scrollToPlaying } from './views.js';
 import { initTitlebar, initSidebar, initPlayerbar, toggleImmersive } from './shell.js';
 import { initSide } from './side.js';
@@ -24,6 +25,7 @@ async function boot() {
   applyTheme();
   await loadLibrary();
   initAi();
+  initTune();
   initTitlebar();
   initSidebar();
   initPlayerbar();
@@ -35,7 +37,7 @@ async function boot() {
 
 on('settings', (s) => {
   applyTheme();
-  applyEq(s.eq);
+  refreshEq();
 });
 
 // 正在播放的歌没有封面时，后台尝试在线补全（成功后主进程会通知资料库变化）

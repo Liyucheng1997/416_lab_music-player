@@ -34,6 +34,16 @@ function request(kind, payload, onDelta) {
   };
 }
 
+// 不跟随切歌取消的请求（AI 调音用）
+export function requestDetached(kind, payload) {
+  const reqId = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const promise = new Promise((resolve, reject) => {
+    pending.set(reqId, { resolve, reject });
+    window.api.invoke('ai:start', { reqId, kind, ...payload }).catch((e) => { pending.delete(reqId); reject(e); });
+  });
+  return { reqId, promise, cancel: () => window.api.invoke('ai:cancel', reqId) };
+}
+
 function cancelAll() {
   for (const id of live) window.api.invoke('ai:cancel', id);
   live = new Set();

@@ -45,6 +45,8 @@ const DEFAULT_SETTINGS = {
   ai: { apiKeyEnc: '', baseURL: '', model: DEFAULT_MODEL, effort: 'low', autoTimeline: true },
   mcp: { enabled: false, port: 17890, lan: false, token: '' },
   update: { autoCheck: true },
+  // AI 调音：设备信息、偏好、上次的推荐结果；auto 开启时按歌曲类型自动切换 profiles 里的曲线
+  tune: { device: { type: '', model: '' }, wish: '', auto: false, profiles: [], last: null },
   window: null,
   session: null,
   ui: {},
@@ -52,7 +54,7 @@ const DEFAULT_SETTINGS = {
 
 const settings = new JsonStore(path.join(DATA, 'settings.json'), DEFAULT_SETTINGS);
 // 补齐新增的嵌套默认值
-for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai', 'mcp', 'update']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
+for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai', 'mcp', 'update', 'tune']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
 if (!settings.data.mcp.token) { settings.data.mcp.token = newToken(); settings.save(); }
 
 function apiKey() {
@@ -440,8 +442,14 @@ function registerIpc() {
 
   handle('ai:cached', (id) => ai.cached(id));
   handle('ai:cancel', (reqId) => ai.cancel(reqId));
-  handle('ai:start', ({ reqId, kind, trackId: id, lines, history }) => {
+  handle('ai:start', ({ reqId, kind, trackId: id, lines, history, ...rest }) => {
     const track = library.tracks.get(id);
+    if (kind === 'tune') {
+      ai.tune(reqId, { ...rest, track })
+        .then((result) => send('ai:done', { reqId, result }))
+        .catch((e) => send('ai:error', { reqId, message: describeAiError(e) }));
+      return true;
+    }
     if (!track) return false;
     const onText = (delta) => send('ai:delta', { reqId, delta });
     const job = kind === 'overview' ? ai.overview(reqId, { track, lines }, onText)

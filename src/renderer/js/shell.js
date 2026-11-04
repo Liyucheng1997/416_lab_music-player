@@ -5,6 +5,7 @@ import { player, analyser, toggle, next, prev, seek, setVolume, toggleMute, togg
 import { navigate, back, forward, canBack, canForward, playlistMenu, addToPlaylist, toggleLove, albumKey, firstArtist } from './views.js';
 import { setTab, toggleSide, lyricsView } from './side.js';
 import { ai } from './ai-ctl.js';
+import { activeProfile } from './tune.js';
 import { openSettings, openEq } from './dialogs.js';
 import { promptBox } from './ui.js';
 
@@ -235,7 +236,9 @@ export function initPlayerbar() {
     aiBtn.classList.toggle('on', !side.hidden && k === 'ai' || ai.live);
     queueBtn.classList.toggle('on', !side.hidden && k === 'queue');
     dlBtn.classList.toggle('on', !!state.settings.desktopLyrics.enabled);
-    eqBtn.classList.toggle('on', !!state.settings.eq.enabled);
+    const ap = activeProfile();
+    eqBtn.classList.toggle('on', !!state.settings.eq.enabled || !!ap);
+    eqBtn.title = ap ? `均衡器（AI 自动：${ap.name} · ${ap.key}）` : '均衡器';
   }
 
   bar.append(
@@ -283,6 +286,7 @@ export function initPlayerbar() {
   on('player:volume', drawVol);
   on('settings', syncButtons);
   on('ai', syncButtons);
+  on('tune', syncButtons);
   window.api.on('dl:state', (dl) => { state.settings.desktopLyrics = dl; syncButtons(); });
   drawTrack();
   drawState();

@@ -4,6 +4,7 @@ import { state, emit, on, saveSettings } from './store.js';
 import { modal, toast } from './ui.js';
 import { EQ_FREQS, EQ_PRESETS, applyEq } from './player.js';
 import { parseLrc, mergeTranslation } from './lrc.js';
+import { openTune, autoOn, activeProfile } from './tune.js';
 
 // ---------------- 查找歌词 ----------------
 export function openLyricsSearch(track) {
@@ -147,8 +148,18 @@ export function openCoverSearch(track) {
 
 // ---------------- 均衡器 ----------------
 export function openEq() {
-  const eq = structuredClone(state.settings.eq);
-  const commit = () => { applyEq(eq); saveSettings({ eq }); };
+  // AI 按类型自动调音时，滑块显示当前这首歌用的曲线；手动改动任何一处就转为固定设置、关闭自动切换
+  const ap = autoOn() ? activeProfile() : null;
+  const eq = ap ? { enabled: true, preamp: ap.preamp, bands: [...ap.bands], preset: `AI · ${ap.name}` } : structuredClone(state.settings.eq);
+  let leaveAuto = autoOn();
+  const commit = () => {
+    applyEq(eq);
+    saveSettings(leaveAuto ? { eq, tune: { auto: false } } : { eq });
+    if (leaveAuto) { leaveAuto = false; banner?.remove(); emit('tune', null); }
+  };
+  const banner = autoOn() ? h('div', { class: 'tune-banner' }, icon('sparkles', 15),
+    h('div', { class: 'grow' }, ap ? `AI 按歌曲类型自动调音中，这首歌用的是「${ap.name}」（${ap.key}）。` : 'AI 按歌曲类型自动调音中。', h('div', { class: 'ai-note' }, '手动调整滑块或预设会改为固定设置，并关闭自动切换。')),
+    h('button', { class: 'btn btn-sm', onclick: async () => { await saveSettings({ tune: { auto: false } }); emit('tune', null); m.close(); openEq(); } }, '关闭自动')) : null;
   const sw = h('button', { class: `switch ${eq.enabled ? 'on' : ''}`, onclick: () => { eq.enabled = !eq.enabled; sw.classList.toggle('on', eq.enabled); commit(); } });
   const values = [];
   const sliders = [];
@@ -184,11 +195,13 @@ export function openEq() {
       chips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === e.target));
       commit();
     } }, name)));
-  modal({
+  const m = modal({
     title: '均衡器',
     width: 640,
     body: h('div', { class: 'eq' },
-      h('div', { class: 'eq-top' }, sw, h('div', { class: 'grow' }, h('b', {}, '启用均衡器'), h('div', { class: 'ai-note' }, '双击滑块归零。开启后会自动压低前级增益，避免爆音。'))),
+      banner,
+      h('div', { class: 'eq-top' }, sw, h('div', { class: 'grow' }, h('b', {}, '启用均衡器'), h('div', { class: 'ai-note' }, '双击滑块归零。开启后会自动压低前级增益，避免爆音。')),
+        h('button', { class: 'btn btn-sm', title: '按你的播放设备和歌曲类型推荐曲线', onclick: () => { m.close(); openTune(); } }, icon('sparkles', 14), 'AI 调音')),
       chips,
       h('div', { class: 'eq-bands' }, pre.el, bands)),
   });
@@ -266,6 +279,7 @@ export function openSettings(section = 'library') {
       return h('div', {},
         h('div', { class: 'set-group' }, h('h4', {}, '播放'),
           row('均衡器', '10 段均衡器与预设', h('button', { class: 'btn btn-sm', onclick: openEq }, icon('eq', 14), '打开')),
+          row('AI 调音', '按你的播放设备和歌曲类型，让 AI 推荐均衡器曲线和设置建议；也可以按类型自动切换曲线。', h('button', { class: 'btn btn-sm', onclick: () => openTune() }, icon('sparkles', 14), '打开')),
           row('关闭窗口时最小化到托盘', '音乐继续播放，从托盘图标恢复窗口', switchCtl(s().closeToTray, (v) => saveSettings({ closeToTray: v })))),
         h('div', { class: 'set-group' }, h('h4', {}, '格式支持'),
           row('ffmpeg', 'APE、WMA、DSD、ALAC、WavPack 等格式需要 ffmpeg 转码后播放，转码结果会缓存。', ff),
