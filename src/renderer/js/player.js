@@ -49,7 +49,7 @@ export const player = {
 const offsetOf = (t) => t?.cueStart || 0;
 let loadedPath = '';
 let counted = false;
-let errorStreak = 0;
+let wantPlay = false; // 用户（或自动连播）确实要播放这一首；启动时恢复上次进度不算
 
 function ensureGraph() {
   if (ctx) return;
@@ -116,6 +116,7 @@ async function load(index, { autoplay = true, at = 0 } = {}) {
   const t = player.track;
   if (!t) return;
   counted = false;
+  wantPlay = autoplay;
   ensureGraph();
   if (ctx.state === 'suspended') ctx.resume();
   const start = offsetOf(t) + at;
@@ -204,7 +205,9 @@ export async function toggle() {
   ensureGraph();
   if (ctx.state === 'suspended') await ctx.resume();
   if (audio.paused) {
-    if (!audio.src) return load(player.index);
+    // 上次加载失败（比如外接硬盘当时没插）：重新加载这一首再播
+    if (!audio.src || audio.error) return load(player.index);
+    wantPlay = true;
     fader.gain.value = 0;
     await audio.play().catch(() => {});
     fadeTo(1, 200);
@@ -357,7 +360,6 @@ audio.addEventListener('ended', () => {
   next(true);
 });
 audio.addEventListener('loadedmetadata', () => {
-  errorStreak = 0;
   const t = player.track;
   if (t && t.cueStart == null && Number.isFinite(audio.duration) && Math.abs((t.duration || 0) - audio.duration) > 1) {
     t.duration = audio.duration;
@@ -372,13 +374,18 @@ audio.addEventListener('timeupdate', () => {
   if (!counted && player.duration && (audio.currentTime > player.duration * 0.5 || audio.currentTime > 240)) markPlayed();
   if (Math.floor(audio.currentTime) % 10 === 0) saveSession();
 });
-audio.addEventListener('error', () => {
+// 播放失败就停在这一首，不自动跳下一首：文件找不到时（外接硬盘没插）往下跳也一样放不了，只会一直报错
+audio.addEventListener('error', async () => {
   const t = player.track;
   loadedPath = '';
   if (!t || !audio.src) return;
-  errorStreak++;
-  toast(`无法播放「${t.title}」${t.needsTranscode ? '（需要 ffmpeg 转码）' : ''}`, 'error');
-  if (errorStreak < 5 && player.queue.length > 1) setTimeout(() => next(), 900);
+  const shouldTell = wantPlay;
+  wantPlay = false;
+  emitState();
+  if (!shouldTell) return; // 启动时恢复上次的歌，文件不在就安静地等着，不弹提示
+  const exists = await window.api.invoke('lib:exists', t.path).catch(() => true);
+  const why = !exists ? '：找不到文件，外接硬盘是不是没插？' : t.needsTranscode ? '（需要 ffmpeg 转码）' : '';
+  toast(`无法播放「${t.title}」${why}`, 'error');
 });
 
 // CUE 分轨播到本首结尾时切到下一首；timeupdate 只有 4Hz，播放中再用定时器补一下精度

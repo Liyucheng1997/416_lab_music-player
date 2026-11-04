@@ -588,6 +588,8 @@ app.on('before-quit', () => {
   library.store.flushSync();
   classifier.flushSync();
   mcp.stop();
+  // stop() 是异步的，进程可能等不到它删完；这里同步删掉连接信息，免得桥接脚本以为听音还开着
+  try { fs.rmSync(mcp.infoFile, { force: true }); } catch { /* 无所谓 */ }
 });
 
 app.on('window-all-closed', () => {
