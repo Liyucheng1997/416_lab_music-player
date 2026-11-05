@@ -30,6 +30,7 @@ npm test           # 单元测试（歌词解析、扫描索引、封面匹配�
 | AI 赏析 | 用 Claude 生成随播放进度推进的逐段解读、流式整体赏析、追问对话、外文歌词翻译；结果按歌曲缓存 |
 | AI 调音 | 均衡器 → AI 调音：读出系统当前的输出设备（可改设备类型、填型号和偏好），Claude 按设备特点和歌曲类型推荐均衡器曲线，并给出系统 / 设备侧的建议；推荐后可直接试听、和原来的声音对比再应用。「这首歌」给一条固定曲线；「我的曲库」为主要风格各调一条，切歌时按歌曲类型自动切换。换了播放设备会提示重新推荐 |
 | AI 分类 | Claude 按风格 / 语言 / 情绪 / 场景给每首歌打标签，侧栏「AI 分类」按类浏览；搜索也能搜到分类（如「治愈」「睡前」）。标签存在 `ai-tags.json`，不改动音乐文件 |
+| 为你推荐 | 按听歌习惯（播放次数、喜欢、跳过、常在什么时段听什么）和资料库构成算出口味画像，从库里挑歌并给出推荐理由：「猜你喜欢」「此刻」（按时段 / 场景）「发掘新歌」（没听过但合口味）「重温」（喜欢过但很久没听）；可换一批、存为歌单。「AI 精选」让 Claude 从候选歌里挑一张有起伏的歌单，可以写想听什么。听歌记录少时主要按收藏推荐，听得越多越准 |
 | Bot 接入 | 内置 MCP 服务（设置 → Bot 接入），Bot 可以搜歌、点歌、切歌、调音量、看歌词、按心情放歌 |
 | 软件内更新 | 启动时检查 GitHub Releases，有新版本时标题栏出现更新按钮，一键下载、静默安装、自动重启 |
 | 外观 | 浅色 / 深色 / 跟随系统；沉浸式播放页（大封面、大字歌词、频谱、当前段落解读） |
@@ -46,7 +47,7 @@ npm test           # 单元测试（歌词解析、扫描索引、封面匹配�
 - **stdio**：只支持命令行方式的客户端，用设置页给出的命令（借听音自带的 Electron 运行 `src/mcp-stdio.mjs`，不需要另装 Node.js）。听音没开时桥接脚本会自动启动它。
 - 默认只监听本机；打开「允许局域网访问」后，同一局域网的设备凭令牌也能连。
 
-工具：`now_playing` `player_control` `search_tracks` `play` `add_to_queue` `get_queue` `set_volume` `seek` `set_play_mode` `set_loved` `list_playlists` `list_categories` `get_lyrics` `classify_library`。例：`play {"scene":"睡前","lang":"粤语"}`。
+工具：`now_playing` `player_control` `search_tracks` `play` `add_to_queue` `get_queue` `set_volume` `seek` `set_play_mode` `set_loved` `list_playlists` `list_categories` `get_lyrics` `classify_library` `recommend`。例：`play {"scene":"睡前","lang":"粤语"}`。
 
 ## 发布新版本
 
@@ -70,7 +71,7 @@ npm test           # 单元测试（歌词解析、扫描索引、封面匹配�
 ## 目录
 
 ```
-src/main/       主进程：窗口与协议(main.js)、资料库(library.js)、CUE 解析(cue.js)、在线歌词封面(online.js)、AI 赏析与调音(ai.js)、AI 分类(classify.js)、
+src/main/       主进程：窗口与协议(main.js)、资料库(library.js)、CUE 解析(cue.js)、在线歌词封面(online.js)、AI 赏析与调音(ai.js)、AI 分类(classify.js)、为你推荐(recommend.js)、
                 MCP 服务(mcp.js、mcp-tools.js)、软件内更新(updater.js)、转码(transcode.js)
 src/mcp-stdio.mjs  MCP stdio → HTTP 桥接
 src/preload/    IPC 白名单

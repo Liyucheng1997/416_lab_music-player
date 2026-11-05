@@ -16,7 +16,7 @@ const FILTERS = {
 
 const LRC_TIME = /\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/g;
 
-export function createTools({ library, classifier, online, callRenderer, onlineLyrics }) {
+export function createTools({ library, classifier, online, callRenderer, onlineLyrics, recommendList }) {
   const tags = (id) => classifier.tags[id] || null;
   const card = (t) => t && {
     id: t.id,
@@ -242,6 +242,33 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
         return { track: card(t), source: r.source, lyrics: text };
       },
     },
+    ...(recommendList ? [{
+      name: 'recommend',
+      title: '为你推荐',
+      description: '按用户的听歌习惯（播放次数、喜欢、跳过、常在什么时段听什么）和资料库构成推荐歌曲，每首附推荐理由。mode：mix 猜你喜欢、now 适合此刻（按时段）、discover 没听过但可能喜欢、rewind 喜欢过但很久没听。play=true 时直接替换队列按推荐顺序播放。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          mode: { type: 'string', enum: ['mix', 'now', 'discover', 'rewind'], default: 'mix' },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 30 },
+          play: { type: 'boolean', default: false },
+        },
+      },
+      annotations: act,
+      run: async ({ mode = 'mix', limit = 30, play = false }) => {
+        const r = recommendList(mode, { limit: Math.max(1, Math.min(limit, 100)) });
+        if (!r.items.length) return { mode, tracks: [], note: mode === 'rewind' ? '还没有「喜欢过但很久没听」的歌' : '没有可推荐的歌' };
+        if (play) await callRenderer('play', { ids: r.items.map((x) => x.id), shuffle: false });
+        return {
+          mode,
+          slot: r.slot.label,
+          taste: r.profile.top,
+          basis: r.profile.basis,
+          tracks: r.items.map((x) => ({ ...card(library.tracks.get(x.id)), reason: x.reason })),
+          ...(play ? { playing: true } : {}),
+        };
+      },
+    }] : []),
     {
       name: 'classify_library',
       title: 'AI 分类资料库',
@@ -256,4 +283,5 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
 export const INSTRUCTIONS = `这是「听音」——用户电脑上的本地音乐播放器。
 - 想放某首歌：先 search_tracks 找到 id，再 play {track_ids:[…]}；想按心情 / 场景 / 歌手放一批歌，直接 play 并给出筛选条件即可。
 - AI 分类可选值 —— ${DIM_KEYS.map((k) => `${DIMENSIONS[k].label}(${k})：${DIMENSIONS[k].values.join('、')}`).join('；')}。
-- 不确定资料库里有什么时，用 list_categories 看分类和数量。`;
+- 不确定资料库里有什么时，用 list_categories 看分类和数量。
+- 用户说「随便放点我爱听的」「推荐几首」时用 recommend（可加 play:true 直接播放）。`;

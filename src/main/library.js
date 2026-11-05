@@ -100,7 +100,7 @@ export class Library {
     this.thumb = thumb; // (buffer) => 缩略图 jpeg buffer
     this.onProgress = onProgress || (() => {});
     this.onChange = onChange || (() => {});
-    this.store = new JsonStore(path.join(dir, 'library.json'), { folders: [], tracks: [], playlists: [] });
+    this.store = new JsonStore(path.join(dir, 'library.json'), { folders: [], tracks: [], playlists: [], history: [] });
     this.tracks = new Map(this.store.data.tracks.map((t) => [t.id, t]));
     // 索引格式升级后，下次扫描把所有文件重新读一遍（播放统计会保留）
     if (this.store.data.version !== LIB_VERSION) {
@@ -116,6 +116,8 @@ export class Library {
 
   get folders() { return this.store.data.folders; }
   get playlists() { return this.store.data.playlists; }
+  // 播放记录 [[id, 时间戳], …]，推荐按时段找听歌习惯用
+  get history() { return (this.store.data.history ||= []); }
 
   snapshot() {
     return { folders: this.folders, tracks: [...this.tracks.values()], playlists: this.playlists, scanning: this.scanning };
@@ -516,6 +518,8 @@ export class Library {
     if (!t) return null;
     t.playCount = (t.playCount || 0) + 1;
     t.lastPlayed = Date.now();
+    this.history.push([id, t.lastPlayed]);
+    if (this.history.length > 5000) this.history.splice(0, this.history.length - 5000);
     this.persist();
     return t;
   }

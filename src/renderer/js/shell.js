@@ -173,6 +173,7 @@ export function initSidebar() {
         item('aitags', 'AI 分类', 'wand'),
         item('folders', '文件夹', 'folder')),
       h('div', { class: 'nav-group' }, h('div', { class: 'nav-title' }, '收藏'),
+        item('foryou', '为你推荐', 'compass'),
         item('loved', '我喜欢', 'heart', null, loved || null),
         item('recent', '最近播放', 'recent'),
         item('top', '最常播放', 'trending'),

@@ -8,6 +8,7 @@ const INVOKE = new Set([
   'cover:search', 'cover:apply', 'cover:auto', 'cover:fillMissing', 'cover:pickFile', 'artist:image',
   'ai:cached', 'ai:cancel', 'ai:start',
   'tags:get', 'tags:start', 'tags:cancel',
+  'rec:list', 'rec:ai',
   'mcp:status', 'mcp:set', 'mcp:stdioCommand',
   'update:state', 'update:check', 'update:install', 'update:releases',
   'settings:get', 'settings:set', 'settings:ffmpeg', 'settings:pickFfmpeg', 'shell:open',

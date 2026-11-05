@@ -146,6 +146,51 @@ function deviceCard(device) {
   return rows.filter(Boolean).join('\n');
 }
 
+// ---------- 为你推荐：AI 从候选歌里挑一张歌单 ----------
+const RECOMMEND_SYSTEM = `你是「听音」音乐播放器里的选歌人，了解华语和欧美日韩流行、古典、民乐、原声等各类音乐。你要根据用户的听歌口味，从用户自己资料库里的候选歌曲中挑出一张歌单。
+
+要求：
+- 只能从候选列表里选，用序号 i 指代，不能编造歌曲。
+- 歌单要有起伏和顺序感：开头好入耳，中段可以换换口味，结尾收得住；同一位歌手不要连着出现，全单同一位歌手一般不超过 3 首。
+- 大部分歌要贴合口味，再放几首用户没怎么听过、但大概率会喜欢的歌，给他一点新鲜感。
+- 用户写了想听什么时，优先满足。
+- 一律用简体中文，口语化，不要使用 emoji。认识这首歌时，理由可以说说它好在哪；不认识就从口味和类型出发，不要编造事实。`;
+
+const RECOMMEND_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', description: '歌单名，4 到 12 个字' },
+    intro: { type: 'string', description: '对用户口味的判断和这张歌单的思路，60 到 140 字' },
+    picks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { i: { type: 'integer' }, why: { type: 'string', description: '为什么选这首，10 到 30 字' } },
+        required: ['i', 'why'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['title', 'intro', 'picks'],
+  additionalProperties: false,
+};
+
+const BASIS = { collection: '听歌记录还很少，下面的口味主要是从他收藏了哪些歌推断的', mixed: '口味一半来自听歌记录、一半来自收藏', listening: '口味主要来自听歌记录' };
+
+export function tasteCard(profile, slot) {
+  const t = profile.top;
+  const rows = [
+    `（${BASIS[profile.basis] || ''}；累计播放 ${profile.plays} 次，喜欢 ${profile.loved} 首）`,
+    t.artist?.length && `偏爱的歌手：${t.artist.join('、')}`,
+    t.style?.length && `常听风格：${t.style.join('、')}`,
+    t.lang?.length && `语言：${t.lang.join('、')}`,
+    t.mood?.length && `情绪：${t.mood.join('、')}`,
+    t.decade?.length && `年代：${t.decade.join('、')}`,
+    slot && `现在是${slot.label}`,
+  ];
+  return rows.filter(Boolean).join('\n');
+}
+
 export class AiService {
   constructor({ dir, getSettings }) {
     this.cacheDir = path.join(dir, 'ai');
@@ -277,6 +322,33 @@ export class AiService {
     const profiles = (data.profiles || []).map(normalizeProfile).filter((p) => keys.includes(p.key) && !seen.has(p.key) && seen.add(p.key));
     if (!profiles.length) throw new SyntaxError('no profiles');
     return { device: String(data.device || ''), profiles, tips: (data.tips || []).slice(0, 6) };
+  }
+
+  // pool: [{ track, tags, from, reason }]；返回 { title, intro, items: [{ id, why }] }
+  async recommend(reqId, { pool, profile, slot, wish, count = 25 }) {
+    const clean = (s) => String(s || '').replace(/[\t\n\r]/g, ' ').slice(0, 50);
+    const FROM = { mix: '口味相近', discover: '没听过', rewind: '很久没听' };
+    const rows = pool.map(({ track: t, tags: tg, from }, i) => [
+      i, clean(t.artist), clean(t.title), clean(t.album), t.year || '',
+      tg ? [tg.style, tg.lang, ...(tg.mood || [])].filter(Boolean).join('/') : clean(t.genre),
+      [t.playCount ? `听过${t.playCount}次` : '没听过', t.loved && '喜欢', FROM[from]].filter(Boolean).join('·'),
+    ].join('\t'));
+    const raw = await this.run(reqId, {
+      system: RECOMMEND_SYSTEM,
+      format: RECOMMEND_SCHEMA,
+      maxTokens: 16000,
+      messages: [{
+        role: 'user',
+        content: `用户的口味：\n${tasteCard(profile, slot)}${wish ? `\n\n用户这次想听：${wish}` : ''}\n\n候选歌曲 ${pool.length} 首，每行依次是：序号、歌手、歌名、专辑、年份、风格/语言/情绪、听歌情况。\n${rows.join('\n')}\n\n请挑 ${count} 首左右，按播放顺序排好。`,
+      }],
+    });
+    const data = JSON.parse(raw);
+    const seen = new Set();
+    const items = (data.picks || [])
+      .filter((p) => pool[p.i] && !seen.has(p.i) && seen.add(p.i))
+      .map((p) => ({ id: pool[p.i].track.id, why: String(p.why || '').slice(0, 60) }));
+    if (!items.length) throw new SyntaxError('no picks');
+    return { title: String(data.title || 'AI 为你选的歌').slice(0, 20), intro: String(data.intro || ''), items };
   }
 
   async chat(reqId, { track, lines, history }, onText) {

@@ -61,7 +61,7 @@ async function post(info, msg) {
 
 const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
 
-// 听音没开时就地回答的请求；返回 undefined 表示必须交给听音
+// 听音没开时就地回答的请求；只有 tools/call 返回 undefined，表示必须交给听音
 function answerOffline(m) {
   if (!m || typeof m.method !== 'string') return undefined;
   if (m.id == null) return null; // 通知，不用回
@@ -79,7 +79,10 @@ function answerOffline(m) {
     case 'tools/list': return ok(m.id, last.tools || { tools: [] });
     case 'resources/list': return ok(m.id, { resources: [] });
     case 'prompts/list': return ok(m.id, { prompts: [] });
-    default: return undefined;
+    case 'resources/templates/list': return ok(m.id, { resourceTemplates: [] });
+    case 'tools/call': return undefined;
+    // 客户端还会探测 logging/setLevel、completion/complete 等，听音都不支持，直接回绝，别为它们把听音打开
+    default: return { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `Method not found: ${m.method}` } };
   }
 }
 

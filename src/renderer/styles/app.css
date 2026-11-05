@@ -439,3 +439,23 @@ img { user-select: none; -webkit-user-drag: none; }
 .tune-banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--primary-soft); font-size: 13px; }
 .tune-banner > .ico { color: var(--primary); flex-shrink: 0; }
 .tune-nokey { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+
+/* 为你推荐 */
+.rec-bar { display: flex; align-items: center; gap: 14px; padding: 0 28px 12px; flex-wrap: wrap; flex-shrink: 0; }
+.rec-taste { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.rec-taste .chip { height: 26px; padding: 0 11px; font-size: 12px; }
+.rec-taste-label { display: inline-flex; align-items: center; gap: 4px; margin-right: 2px; font-size: 12px; color: var(--text-3); cursor: help; }
+.rec-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rec-ai { display: flex; flex-direction: column; gap: 12px; padding: 0 28px 12px; flex-shrink: 0; }
+.rec-ai-form { display: flex; gap: 8px; }
+.rec-ai-form .input { flex: 1; min-width: 0; height: 34px; border-radius: 99px; padding: 0 16px; }
+.rec-intro { display: flex; gap: 10px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--primary-soft); font-size: 13px; line-height: 1.65; }
+.rec-intro .ico { color: var(--primary); flex-shrink: 0; margin-top: 3px; }
+.rec-intro b { font-size: 14px; font-weight: 600; }
+.rec-intro p { margin: 2px 0 0; color: var(--text-2); }
+.rec-loading { flex: 1; justify-content: center; }
+.rec-loading .btn { margin-left: 4px; }
+.t-reason { color: var(--text-2); }
+.page-head > :first-child { min-width: 0; }
+.page-head .actions { flex-shrink: 0; }
+.page-head .actions .btn { white-space: nowrap; }

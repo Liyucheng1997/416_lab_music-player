@@ -4,6 +4,7 @@ import { state, emit, on, derived, matchSearch, sortAlbumTracks, patchTrack, uiP
 import { player, playList, playNext, addToQueue } from './player.js';
 import { menu, toast, promptBox, confirmBox } from './ui.js';
 import { openCoverSearch, openLyricsSearch } from './dialogs.js';
+import { recommendView } from './recommend.js';
 
 const content = document.getElementById('content');
 const history = { stack: [], pos: -1 };
@@ -35,20 +36,20 @@ export function render() {
 }
 
 // ---------------- 通用：页面头 ----------------
-function pageHead({ eyebrow, title, sub, actions }) {
+export function pageHead({ eyebrow, title, sub, actions }) {
   return h('div', { class: 'page-head' },
     h('div', {}, eyebrow && h('div', { class: 'eyebrow' }, eyebrow), h('h1', {}, title), sub && h('div', { class: 'sub' }, sub)),
     actions && h('div', { class: 'actions' }, actions));
 }
 
-function playButtons(getIds) {
+export function playButtons(getIds) {
   return [
     h('button', { class: 'btn btn-primary', onclick: () => { const ids = getIds(); ids.length && playList(ids, 0, { shuffle: false }); } }, icon('play', 15, { fill: 'currentColor' }), '播放'),
     h('button', { class: 'btn', onclick: () => { const ids = getIds(); ids.length && playList(ids, Math.floor(Math.random() * ids.length), { shuffle: true }); } }, icon('shuffle', 15), '随机'),
   ];
 }
 
-const summary = (list) => `${list.length} 首 · ${fmtTotal(list.reduce((s, t) => s + (t.duration || 0), 0))}`;
+export const summary = (list) => `${list.length} 首 · ${fmtTotal(list.reduce((s, t) => s + (t.duration || 0), 0))}`;
 
 // ---------------- 歌曲表格 ----------------
 const COLUMNS = [
@@ -120,7 +121,7 @@ export function songTable(tracks, opts = {}) {
     h('div', { class: 'c-num' }, num),
     h('div', { class: 'c-title' }, compact && numbering === 'track' ? null : coverEl(t.coverId), h('div', { class: 't-text' },
       h('span', { class: 't-title' }, t.title),
-      compact ? null : h('span', { class: 't-sub' }, formatLabel(t)))),
+      compact ? null : opts.sub ? h('span', { class: 't-sub t-reason' }, opts.sub(t)) : h('span', { class: 't-sub' }, formatLabel(t)))),
     h('div', { class: 'c-artist' }, linkArtist),
     h('div', { class: 'c-album' }, t.album ? h('a', { onclick: (e) => { e.stopPropagation(); navigate('album', albumKey(t)); } }, t.album) : ''),
     h('div', { class: 'c-dur' }, fmtTime(t.duration)),
@@ -469,7 +470,7 @@ function groupDetail(kind, name, eyebrow) {
 }
 
 // ---------------- AI 分类 ----------------
-const tagKey = (dim, name) => `${dim}\u0001${name}`;
+export const tagKey = (dim, name) => `${dim}\u0001${name}`;
 
 function aiTagsView() {
   const dims = state.tagDims;
@@ -587,7 +588,7 @@ export function playlistMenu(pl, x, y) {
   ], x, y);
 }
 
-function emptyPage(text) {
+export function emptyPage(text) {
   return h('div', { class: 'page' }, h('div', { class: 'empty' }, icon('disc', 34, { 'stroke-width': 1.4 }), text));
 }
 
@@ -633,6 +634,7 @@ const VIEWS = {
   top: () => smartView('top'),
   added: () => smartView('added'),
   playlist: playlistView,
+  foryou: recommendView,
 };
 
 export function scrollToPlaying() { activeTable?.scrollToPlaying(); }

@@ -14,6 +14,7 @@ import { Classifier, DIMENSIONS } from './classify.js';
 import { McpServer, newToken } from './mcp.js';
 import { createTools, INSTRUCTIONS } from './mcp-tools.js';
 import { Updater } from './updater.js';
+import { recommend, candidatePool } from './recommend.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const RENDERER = path.join(ROOT, 'src/renderer');
@@ -118,6 +119,13 @@ const classifier = new Classifier({
   onChange: () => send('lib:changed'),
 });
 
+// 为你推荐：本地算法随时可算；AI 挑的歌单存一份，下次打开还在
+const recStore = new JsonStore(path.join(DATA, 'recommend.json'), { ai: null });
+const recInput = () => ({ tracks: [...library.tracks.values()], tags: classifier.tags, history: library.history });
+function recommendList(mode, { limit = 40, exclude = [], seed } = {}) {
+  return recommend({ ...recInput(), mode, limit, exclude, seed });
+}
+
 // MCP 的播放指令转给界面执行
 const pendingCalls = new Map();
 let callSeq = 0;
@@ -135,7 +143,7 @@ const mcp = new McpServer({
   version: app.getVersion(),
   instructions: INSTRUCTIONS,
   getConfig: () => settings.data.mcp,
-  tools: createTools({ library, classifier, online, callRenderer, onlineLyrics: () => settings.data.lyrics.online }),
+  tools: createTools({ library, classifier, online, callRenderer, onlineLyrics: () => settings.data.lyrics.online, recommendList }),
 });
 const updater = new Updater({ onState: (st) => send('update:state', st) });
 updater.beforeQuit = () => { quitting = true; };
@@ -444,6 +452,19 @@ function registerIpc() {
   handle('ai:cancel', (reqId) => ai.cancel(reqId));
   handle('ai:start', ({ reqId, kind, trackId: id, lines, history, ...rest }) => {
     const track = library.tracks.get(id);
+    if (kind === 'recommend') {
+      const { pool, profile, slot } = candidatePool(recInput());
+      if (pool.length < 5) throw new Error('资料库里的歌太少，没法挑歌单');
+      const items = pool.map((x) => ({ track: library.tracks.get(x.id), tags: classifier.tags[x.id], from: x.from }));
+      ai.recommend(reqId, { pool: items, profile, slot, wish: rest.wish })
+        .then((result) => {
+          recStore.data.ai = { ...result, wish: rest.wish || '', at: Date.now() };
+          recStore.save();
+          send('ai:done', { reqId, result: recStore.data.ai });
+        })
+        .catch((e) => send('ai:error', { reqId, message: describeAiError(e) }));
+      return true;
+    }
     if (kind === 'tune') {
       ai.tune(reqId, { ...rest, track })
         .then((result) => send('ai:done', { reqId, result }))
@@ -461,7 +482,10 @@ function registerIpc() {
     return true;
   });
 
-  handle('tags:get', () => ({ tags: classifier.tags, dims: DIMENSIONS, status: classifier.status() }));
+  handle('rec:list', (mode, opts) => recommendList(mode, opts || {}));
+  handle('rec:ai', () => recStore.data.ai);
+
+  handle('tags:get', () =>({ tags: classifier.tags, dims: DIMENSIONS, status: classifier.status() }));
   handle('tags:start', (opts) => classifier.start(opts || {}));
   handle('tags:cancel', () => { classifier.cancel(); return classifier.status(); });
 
@@ -595,6 +619,7 @@ app.on('before-quit', () => {
   library.store.data.tracks = [...library.tracks.values()];
   library.store.flushSync();
   classifier.flushSync();
+  recStore.flushSync();
   mcp.stop();
   // stop() 是异步的，进程可能等不到它删完；这里同步删掉连接信息，免得桥接脚本以为听音还开着
   try { fs.rmSync(mcp.infoFile, { force: true }); } catch { /* 无所谓 */ }
