@@ -40,6 +40,7 @@ export const player = {
   repeat: 'all', // off | all | one
   volume: 0.8,
   muted: false,
+  loading: false, // 在线歌曲正在取音源
   get track() { return state.byId.get(this.queue[this.index]) || null; },
   get playing() { return !audio.paused; },
   // CUE 分轨：时间相对于这一首在整轨文件里的起点
@@ -55,6 +56,13 @@ const offsetOf = (t) => t?.cueStart || 0;
 let loadedPath = '';
 let counted = false;
 let wantPlay = false; // 用户（或自动连播）确实要播放这一首；启动时恢复上次进度不算
+let failStreak = 0; // 连续几首在线歌曲没有音源
+
+function setLoading(v) {
+  if (player.loading === v) return;
+  player.loading = v;
+  emit('player:state', player);
+}
 
 function ensureGraph() {
   if (ctx) return;
@@ -131,6 +139,7 @@ async function load(index, { autoplay = true, at = 0 } = {}) {
     if (Math.abs(audio.currentTime - start) > 1) audio.currentTime = start;
   } else {
     if (t.needsTranscode) toast(`「${t.title}」需要转码，首次播放稍等片刻`);
+    setLoading(!!t.online && autoplay);
     audio.src = `media://track/${t.id}`;
     loadedPath = t.path;
     if (start) audio.currentTime = start;
@@ -358,6 +367,13 @@ export function restoreSession() {
 }
 
 // ---------- 音频事件 ----------
+audio.addEventListener('playing', () => {
+  failStreak = 0;
+  setLoading(false);
+  const t = player.track;
+  if (t?.unavailable) { t.unavailable = false; emit('track', t); }
+});
+audio.addEventListener('canplay', () => setLoading(false));
 audio.addEventListener('play', emitState);
 audio.addEventListener('pause', emitState);
 audio.addEventListener('ended', () => {
@@ -386,8 +402,22 @@ audio.addEventListener('error', async () => {
   if (!t || !audio.src) return;
   const shouldTell = wantPlay;
   wantPlay = false;
+  player.loading = false;
   emitState();
   if (!shouldTell) return; // 启动时恢复上次的歌，文件不在就安静地等着，不弹提示
+  if (t.online) {
+    // 在线歌曲没有可播放的音源很常见：跳到下一首，连续几首都不行才停下
+    failStreak++;
+    t.unavailable = true; // 列表里标灰，下次能播了再去掉
+    emit('track', t);
+    const n = player.queue.length;
+    const i = player.index + 1 < n ? player.index + 1 : player.repeat === 'off' ? -1 : 0;
+    const skip = n > 1 && i >= 0 && failStreak < Math.min(n, 6);
+    toast(`「${t.title}」暂时没有可播放的音源${skip ? '，跳到下一首' : ''}`, 'error');
+    if (skip) load(i);
+    else failStreak = 0;
+    return;
+  }
   const exists = await window.api.invoke('lib:exists', t.path).catch(() => true);
   const why = !exists ? '：找不到文件，外接硬盘是不是没插？' : t.needsTranscode ? '（需要 ffmpeg 转码）' : '';
   toast(`无法播放「${t.title}」${why}`, 'error');

@@ -459,3 +459,15 @@ img { user-select: none; -webkit-user-drag: none; }
 .page-head > :first-child { min-width: 0; }
 .page-head .actions { flex-shrink: 0; }
 .page-head .actions .btn { white-space: nowrap; }
+
+/* ---------- 在线音乐 ---------- */
+.ol-search { display: flex; gap: 8px; align-items: center; }
+.ol-search .input { width: 260px; height: 34px; border-radius: 99px; padding: 0 16px; }
+.ol-section { margin-bottom: 14px; }
+.ol-section h3 { margin: 10px 8px 10px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.ol-songs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 14px; }
+.ol-songs .cover { width: 38px; height: 38px; border-radius: 8px; flex-shrink: 0; }
+.ol-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 720px; line-height: 1.55; }
+.rec-bar > .btn { margin-left: auto; }
+.np-controls .icon-btn.big.loading { animation: pulse 1.1s ease-in-out infinite; }
+.trow.unavailable > :not(.c-love) { opacity: 0.42; }

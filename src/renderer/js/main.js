@@ -1,5 +1,5 @@
 // 入口：加载设置与资料库，挂载各模块，绑定快捷键
-import { state, on, emit, loadLibrary } from './store.js';
+import { state, on, emit, loadLibrary, patchTrack } from './store.js';
 import { player, toggle, next, prev, setVolume, seek, refreshEq, restoreSession } from './player.js';
 import { initTune } from './tune.js';
 import { navigate, render, scrollToPlaying } from './views.js';
@@ -41,7 +41,12 @@ on('settings', (s) => {
 });
 
 // 正在播放的歌没有封面时，后台尝试在线补全（成功后主进程会通知资料库变化）
-on('player:track', (t) => { if (t && !t.coverId) window.api.invoke('cover:auto', t.id); });
+on('player:track', (t) => {
+  if (!t || t.coverId) return;
+  if (!t.online) { window.api.invoke('cover:auto', t.id); return; }
+  // 在线歌曲没带封面的：解析出音源后可能借到一张
+  window.api.invoke('online:info', t.id).then((r) => { if (r?.coverId) patchTrack({ id: t.id, coverId: r.coverId }); }).catch(() => {});
+});
 
 on('view', (v) => {
   state.settings.ui.lastView = v;
@@ -65,6 +70,13 @@ window.api.on('lib:progress', (p) => {
 });
 on('playlists', () => { if (state.view.name === 'playlist') render(); });
 on('loved', () => { if (state.view.name === 'loved') render(); });
+// 在设置里开关在线音乐、换服务地址后，停在在线页面时刷新
+let onlineConf = '';
+on('settings', (s) => {
+  const conf = JSON.stringify(s.online || {});
+  if (onlineConf && conf !== onlineConf && ['online', 'onlinelist', 'search'].includes(state.view.name)) render();
+  onlineConf = conf;
+});
 
 // ---------- 快捷键 ----------
 document.addEventListener('keydown', (e) => {

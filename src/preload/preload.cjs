@@ -9,6 +9,7 @@ const INVOKE = new Set([
   'ai:cached', 'ai:cancel', 'ai:start',
   'tags:get', 'tags:start', 'tags:cancel',
   'rec:list', 'rec:ai',
+  'online:search', 'online:toplists', 'online:playlist', 'online:discover', 'online:info', 'online:meta', 'online:test',
   'mcp:status', 'mcp:set', 'mcp:stdioCommand',
   'update:state', 'update:check', 'update:install', 'update:releases',
   'settings:get', 'settings:set', 'settings:ffmpeg', 'settings:pickFfmpeg', 'shell:open',

@@ -16,7 +16,8 @@ const FILTERS = {
 
 const LRC_TIME = /\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/g;
 
-export function createTools({ library, classifier, online, callRenderer, onlineLyrics, recommendList }) {
+export function createTools({ library, classifier, online, music = null, trackOf = (id) => library.tracks.get(id), callRenderer, onlineLyrics, recommendList }) {
+  const isOnline = () => !!music?.enabled;
   const tags = (id) => classifier.tags[id] || null;
   const card = (t) => t && {
     id: t.id,
@@ -26,6 +27,7 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
     year: t.year || undefined,
     duration: fmt(t.duration),
     genre: t.genre || undefined,
+    source: t.online ? `在线 · ${music?.sourceName(t) || t.online.source}` : undefined,
     ai: tags(t.id) ? { style: tags(t.id).style, lang: tags(t.id).lang, mood: tags(t.id).mood, scene: tags(t.id).scene } : undefined,
     loved: t.loved || undefined,
     plays: t.playCount || undefined,
@@ -57,15 +59,15 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
   // track_ids / playlist / 过滤条件 → 曲目 id 列表
   function resolve(args) {
     if (args.track_ids?.length) {
-      const ids = args.track_ids.filter((id) => library.tracks.has(id));
-      if (!ids.length) throw new Error('这些 track_ids 都不在资料库里，先用 search_tracks 查 id');
+      const ids = args.track_ids.filter((id) => trackOf(id));
+      if (!ids.length) throw new Error('这些 track_ids 都找不到，先用 search_tracks（本地）或 search_online（在线）查 id');
       return ids;
     }
     if (args.playlist) {
       const p = library.playlists.find((x) => x.id === args.playlist) || library.playlists.find((x) => x.name === args.playlist)
         || library.playlists.find((x) => x.name.includes(args.playlist));
       if (!p) throw new Error(`没有找到歌单「${args.playlist}」，可以先用 list_playlists 查看`);
-      return p.trackIds.filter((id) => library.tracks.has(id));
+      return p.trackIds.filter((id) => trackOf(id));
     }
     if (!Object.keys(FILTERS).some((k) => args[k] != null && args[k] !== '')) throw new Error('请给出 track_ids、playlist 或至少一个筛选条件（query、artist、style、mood…）');
     const ids = filter(args).map((t) => t.id);
@@ -75,7 +77,7 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
 
   const nowPlaying = async () => {
     const s = await callRenderer('state');
-    return { ...s, track: card(library.tracks.get(s.trackId)) || null, trackId: undefined };
+    return { ...s, track: card(trackOf(s.trackId)) || null, trackId: undefined };
   };
 
   const ro = { readOnlyHint: true, openWorldHint: false };
@@ -109,6 +111,31 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
         return { total: list.length, tracks: list.slice(0, Math.min(args.limit || 20, 200)).map(card) };
       },
     },
+    ...(music ? [{
+      name: 'search_online',
+      title: '在线搜歌',
+      description: '资料库里没有的歌，到在线音乐里找（网易云音乐、酷狗音乐、酷我音乐、哔哩哔哩）。返回的 id 可以直接交给 play 或 add_to_queue 播放。个别歌可能没有可免费播放的音源，播放时会自动跳过。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '歌名、歌手，或「歌名 歌手」' },
+          source: { type: 'string', enum: ['netease', 'kugou', 'kuwo', 'bilibili'], description: '只搜某一个平台；不填则各平台都搜' },
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
+        },
+        required: ['query'],
+      },
+      annotations: { ...ro, openWorldHint: true },
+      run: async ({ query, source, limit = 10 }) => {
+        if (!isOnline()) throw new Error('在线音乐已在听音的设置里关闭');
+        const r = await music.search(query, source ? { source } : {});
+        // 各平台的结果轮流取，靠前的更相关
+        const out = [];
+        for (let i = 0; out.length < limit && r.groups.some((g) => i < g.tracks.length); i++) {
+          for (const g of r.groups) if (g.tracks[i] && out.length < limit) out.push(g.tracks[i]);
+        }
+        return { total: out.length, tracks: out.map(card) };
+      },
+    }] : []),
     {
       name: 'play',
       title: '播放歌曲',
@@ -116,7 +143,7 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
       inputSchema: {
         type: 'object',
         properties: {
-          track_ids: { type: 'array', items: { type: 'string' }, description: '按顺序播放这些歌（id 来自 search_tracks）' },
+          track_ids: { type: 'array', items: { type: 'string' }, description: '按顺序播放这些歌（id 来自 search_tracks 或 search_online）' },
           playlist: { type: 'string', description: '歌单名字或 id' },
           ...FILTERS,
           shuffle: { type: 'boolean', description: '随机播放；不填时，按条件筛出多首歌默认随机，指定 track_ids / 歌单默认顺序' },
@@ -160,7 +187,7 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
       annotations: ro,
       run: async ({ limit = 20 }) => {
         const q = await callRenderer('queue', { limit });
-        return { ...q, tracks: q.ids.map((id, i) => ({ position: q.from + i, current: q.from + i === q.index || undefined, ...card(library.tracks.get(id)) })), ids: undefined };
+        return { ...q, tracks: q.ids.map((id, i) => ({ position: q.from + i, current: q.from + i === q.index || undefined, ...card(trackOf(id)) })), ids: undefined };
       },
     },
     {
@@ -195,7 +222,7 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
       annotations: act,
       run: async ({ track_id, loved = true }) => {
         const r = await callRenderer('love', { id: track_id, loved });
-        return { loved, track: card(library.tracks.get(r.id)) };
+        return { loved, track: card(trackOf(r.id)) };
       },
     },
     {
@@ -233,8 +260,8 @@ export function createTools({ library, classifier, online, callRenderer, onlineL
       annotations: { ...ro, openWorldHint: true },
       run: async ({ track_id }) => {
         const id = track_id || (await callRenderer('state')).trackId;
-        const t = library.tracks.get(id);
-        if (!t) throw new Error(track_id ? '资料库里没有这首歌' : '现在没有在播放');
+        const t = trackOf(id);
+        if (!t) throw new Error(track_id ? '找不到这首歌' : '现在没有在播放');
         const r = await online.getLyrics(t, { online: onlineLyrics() });
         if (r.instrumental) return { track: card(t), lyrics: '', note: '纯音乐' };
         if (!r.lrc) return { track: card(t), lyrics: '', note: '没有找到歌词' };
@@ -284,4 +311,5 @@ export const INSTRUCTIONS = `这是「听音」——用户电脑上的本地音
 - 想放某首歌：先 search_tracks 找到 id，再 play {track_ids:[…]}；想按心情 / 场景 / 歌手放一批歌，直接 play 并给出筛选条件即可。
 - AI 分类可选值 —— ${DIM_KEYS.map((k) => `${DIMENSIONS[k].label}(${k})：${DIMENSIONS[k].values.join('、')}`).join('；')}。
 - 不确定资料库里有什么时，用 list_categories 看分类和数量。
+- 资料库里没有用户要的歌：用 search_online 到在线音乐里找，再把返回的 id 交给 play。先查本地，本地有就放本地的。
 - 用户说「随便放点我爱听的」「推荐几首」时用 recommend（可加 play:true 直接播放）。`;

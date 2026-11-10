@@ -1,8 +1,8 @@
 {
   "name": "tingyin-music",
   "productName": "听音",
-  "version": "1.4.0",
-  "description": "苹果式简约本地音乐播放器：资料库索引、分类浏览、桌面歌词、在线歌词/封面、AI 实时赏析与分类、为你推荐、MCP 接入、软件内更新",
+  "version": "1.5.0",
+  "description": "苹果式简约本地音乐播放器：资料库索引、分类浏览、在线音乐、桌面歌词、在线歌词/封面、AI 实时赏析与分类、为你推荐、MCP 接入、软件内更新",
   "type": "module",
   "main": "src/main/main.js",
   "scripts": {

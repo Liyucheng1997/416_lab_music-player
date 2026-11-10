@@ -5,7 +5,7 @@ import { player, seek, playAt, removeFromQueue, moveInQueue, clearQueue } from '
 import { lyrics, setOffset, loadLyrics } from './lyrics-ctl.js';
 import { ai, setLive, runOverview, runTimeline, ask, translate, canTranslate, segProgress, stopAll, hasKey } from './ai-ctl.js';
 import { openLyricsSearch, openCoverSearch, openSettings } from './dialogs.js';
-import { navigate, albumKey, firstArtist, formatLabel, trackMenu } from './views.js';
+import { firstArtist, formatLabel, trackMenu, gotoArtist, gotoAlbum, sourceName } from './views.js';
 
 const side = document.getElementById('side');
 const TABS = [['lyrics', '歌词'], ['ai', 'AI 赏析'], ['queue', '队列'], ['info', '详情']];
@@ -287,9 +287,10 @@ function infoTab(t) {
     const av = coverEl(null);
     if (url) av.append(h('img', { src: url }));
     else av.replaceChildren(h('span', { class: 'avatar-initial', style: { fontSize: '20px' } }, [...name][0] || '?'));
-    clear(artistBox, h('div', { class: 'artist-card link', onclick: () => navigate('artist', name) }, av,
+    clear(artistBox, h('div', { class: 'artist-card link', onclick: () => gotoArtist(t) }, av,
       h('div', {}, h('div', { class: 'q-title' }, name), h('div', { class: 'q-sub' }, `资料库里有 ${state.tracks.filter((x) => (x.artist || '').includes(name)).length} 首`))));
   });
+  if (t.online) return onlineInfo(t, artistBox);
   const rows = [
     ['专辑', t.album], ['歌手', t.artist], ['专辑歌手', t.albumArtist !== t.artist ? t.albumArtist : ''], ['年份', t.year], ['流派', t.genre],
     ['作曲', t.composer], ['音轨', t.trackNo ? `${t.discNo ? `${t.discNo}-` : ''}${t.trackNo}` : ''], ['时长', fmtTime(t.duration)],
@@ -299,11 +300,36 @@ function infoTab(t) {
   return h('div', { class: 'info' },
     coverEl(t.coverId, { small: false }),
     h('h3', {}, t.title),
-    h('div', { class: 'artist link', onclick: () => t.album && navigate('album', albumKey(t)) }, t.album || t.artist),
+    h('div', { class: 'artist link', onclick: () => t.album && gotoAlbum(t) }, t.album || t.artist),
     h('div', { class: 'info-actions' },
       h('button', { class: 'btn btn-sm', onclick: () => openCoverSearch(t) }, icon('image', 14), '查找封面'),
       h('button', { class: 'btn btn-sm', onclick: () => openLyricsSearch(t) }, icon('mic', 14), '查找歌词'),
       h('button', { class: 'btn btn-sm', onclick: () => window.api.invoke('lib:reveal', t.id) }, icon('folderOpen', 14), '打开位置')),
     artistBox,
     h('dl', { class: 'kv' }, rows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, String(v))])));
+}
+
+// 在线歌曲的详情：来源、实际音源和音质（播放时由服务挑选，可能来自别的平台）
+function onlineInfo(t, artistBox) {
+  const via = h('dd', {}, '查询中…');
+  const quality = h('dd', {}, '—');
+  window.api.invoke('online:info', t.id).then((r) => {
+    if (!r?.available) { via.textContent = '暂时没有可播放的音源'; return; }
+    via.textContent = `${r.viaName || '未知'}${r.kind && r.kind !== 'full' ? '（试听片段）' : ''}${r.matched && r.via !== t.online.source ? ` · ${r.matched}` : ''}`;
+    const q = r.quality || {};
+    quality.textContent = [q.bitrate ? `${q.bitrate} kbps` : q.label ? `音质${q.label}` : '', q.codec || ''].filter(Boolean).join(' · ') || '未知';
+  }).catch((e) => { via.textContent = e.message || '查询失败'; });
+  const rows = [
+    ['专辑', t.album], ['歌手', t.artist], ['时长', fmtTime(t.duration)], ['来源', `在线 · ${sourceName(t)}`],
+    ['收费', { free: '免费', vip: '会员歌曲', paid: '付费歌曲' }[t.online.fee] || ''], ['原视频', t.note], ['播放', `${t.playCount || 0} 次`],
+  ].filter(([, v]) => v);
+  return h('div', { class: 'info' },
+    coverEl(t.coverId, { small: false }),
+    h('h3', {}, t.title),
+    h('div', { class: 'artist link', onclick: () => gotoArtist(t) }, t.artist || sourceName(t)),
+    h('div', { class: 'info-actions' },
+      h('button', { class: 'btn btn-sm', onclick: () => openLyricsSearch(t) }, icon('mic', 14), '查找歌词'),
+      t.online.link ? h('button', { class: 'btn btn-sm', onclick: () => window.api.invoke('lib:reveal', t.id) }, icon('external', 14), '打开原页面') : null),
+    artistBox,
+    h('dl', { class: 'kv' }, rows.map(([k, v]) => [h('dt', {}, k), h('dd', {}, String(v))]), h('dt', {}, '音源'), via, h('dt', {}, '音质'), quality));
 }

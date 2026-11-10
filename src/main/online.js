@@ -61,9 +61,10 @@ function lyricData(x, got) {
 }
 
 export class Online {
-  constructor({ dir, fetch, library, simplified = () => true }) {
+  constructor({ dir, fetch, library, music = null, simplified = () => true }) {
     this.fetch = fetch;
     this.library = library;
+    this.music = music; // 在线音乐服务：在线歌曲先按它给的歌曲 id 取歌词
     this.simplified = simplified;
     this.sources = createSources(this);
     this.lyricDir = path.join(dir, 'lyrics');
@@ -118,7 +119,7 @@ export class Online {
     if (cached && (cached.lrc || cached.instrumental)) return cached;
 
     // CUE 分轨共用一个整轨文件，同名 .lrc 对应的是整张专辑，不能用
-    const base = track.cueStart != null ? null : track.path.slice(0, -path.extname(track.path).length);
+    const base = track.cueStart != null || track.online ? null : track.path.slice(0, -path.extname(track.path).length);
     for (const ext of base ? ['.lrc', '.LRC', '.txt'] : []) {
       try {
         const text = decodeText(await fsp.readFile(base + ext));
@@ -135,7 +136,8 @@ export class Online {
     // 「未找到」只缓存 3 天，之后再自动试一次；歌词来源变了也重试
     if (cached?.none && cached.v === LYRIC_SOURCES_VERSION && Date.now() - cached.at < 3 * 864e5) return cached;
     try {
-      const data = (await this.autoLyrics(track)) || { none: true, v: LYRIC_SOURCES_VERSION };
+      const own = track.online && this.music ? await this.music.lyric(track).catch(() => null) : null;
+      const data = own || (await this.autoLyrics(track)) || { none: true, v: LYRIC_SOURCES_VERSION };
       return await this.saveLyrics(track.id, data);
     } catch (e) {
       return { none: true, error: String(e.message || e) };
@@ -144,7 +146,8 @@ export class Online {
 
   // 各来源一起搜，按匹配度从高到低取歌词，取到为止
   async autoLyrics(track) {
-    const want = { title: cleanTitle(track.title), artist: firstArtist(track.artist), duration: track.duration };
+    // B 站视频的「歌手」是上传者，不能拿来匹配
+    const want = { title: cleanTitle(track.title), artist: track.online?.source === 'bilibili' ? '' : firstArtist(track.artist), duration: track.duration };
     const tasks = this.sources.map((src) => src.search(want).then((list) => list.map((x) => ({ ...x, src }))));
     const lrclib = this.sources.find((s) => s.key === 'lrclib');
     if (track.duration && want.artist) {

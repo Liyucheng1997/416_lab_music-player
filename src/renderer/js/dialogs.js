@@ -211,6 +211,7 @@ export function openEq() {
 const SECTIONS = [
   ['library', '资料库', 'library'],
   ['playback', '播放', 'play'],
+  ['online', '在线音乐', 'globe'],
   ['lyrics', '歌词与封面', 'mic'],
   ['desktop', '桌面歌词', 'captions'],
   ['ai', 'AI 赏析', 'sparkles'],
@@ -287,6 +288,35 @@ export function openSettings(section = 'library') {
             const p = await window.api.invoke('settings:pickFfmpeg');
             if (p) { await saveSettings({ ffmpegPath: p }); show('playback'); }
           } }, '选择…'))));
+    },
+    online() {
+      const o = s().online || {};
+      const st = h('span', { class: 'status' }, '检测中…');
+      const base = h('input', { class: 'input', value: o.base || '', placeholder: 'https://…', spellcheck: false });
+      const test = async (url, save) => {
+        st.className = 'status';
+        st.textContent = '检测中…';
+        try {
+          const r = await window.api.invoke('online:test', url);
+          if (save) { await saveSettings({ online: { base: r.base } }); base.value = r.base; toast('服务地址已保存', 'success'); }
+          st.className = 'status ok';
+          st.textContent = '可用';
+        } catch (e) {
+          st.className = 'status warn';
+          st.textContent = '连不上';
+          if (save) toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error');
+        }
+      };
+      test(o.base, false);
+      return h('div', {},
+        h('div', { class: 'set-group' }, h('h4', {}, '在线音乐'),
+          row('开启在线音乐', '侧栏出现「在线音乐」，搜索时可以切到「在线」。在线歌曲可以直接播放、点喜欢、加进歌单和队列，但不会下载到本地。', switchCtl(o.enabled !== false, (v) => saveSettings({ online: { enabled: v } }))),
+          row('服务地址', '聚合音乐服务（音隅）的地址：搜索、榜单、歌单和播放地址都从它取。换了域名或自己另搭了一个，改这里。', st),
+          h('div', { class: 'search-row', style: { margin: '4px 0 12px' } }, base,
+            h('button', { class: 'btn btn-primary', onclick: () => test(base.value, true) }, '保存'),
+            h('button', { class: 'btn', onclick: async () => { const m = await window.api.invoke('online:meta'); base.value = m.defaultBase; test(m.defaultBase, true); } }, '恢复默认'))),
+        h('div', { class: 'set-group' }, h('h4', {}, '说明'),
+          h('p', { class: 'ai-note' }, '能搜到网易云音乐、酷狗音乐、酷我音乐、哔哩哔哩的歌。播放时由服务找一个能免费播放的音源（可能来自别的平台，在右侧「详情」里能看到实际音源和音质），找不到时会自动跳到下一首。歌词优先用歌曲所在平台的，取不到再走「歌词与封面」里的在线歌词。')));
     },
     lyrics() {
       return h('div', {}, h('div', { class: 'set-group' }, h('h4', {}, '歌词'),
@@ -368,7 +398,7 @@ export function openSettings(section = 'library') {
           h('div', { class: 'mcp-code' }, stdioConf));
       };
       window.api.invoke('mcp:status').then(draw);
-      const tools = ['now_playing', 'player_control', 'search_tracks', 'play', 'add_to_queue', 'get_queue', 'set_volume', 'seek', 'set_play_mode', 'set_loved', 'list_playlists', 'list_categories', 'get_lyrics', 'classify_library'];
+      const tools = ['now_playing', 'player_control', 'search_tracks', 'search_online', 'play', 'add_to_queue', 'get_queue', 'set_volume', 'seek', 'set_play_mode', 'set_loved', 'list_playlists', 'list_categories', 'get_lyrics', 'classify_library'];
       return h('div', {},
         h('div', { class: 'set-group' }, h('h4', {}, 'MCP 服务'),
           row('开启 MCP 服务', '让你的 Bot / AI 助手通过 Model Context Protocol 搜歌、点歌、切歌、调音量、看歌词。', h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, st, switchCtl(m.enabled, (v) => apply({ enabled: v })))),
@@ -414,7 +444,7 @@ export function openSettings(section = 'library') {
           notes,
           row('启动时自动检查更新', '有新版本时标题栏右上角会出现更新按钮', switchCtl(s().update?.autoCheck !== false, (v) => saveSettings({ update: { autoCheck: v } })))),
         h('div', { class: 'set-group' }, h('h4', {}, `听音 ${u().current || ''}`),
-        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析、AI 分类，并通过 MCP 开放给 Bot 控制。\n\n歌词：网易云音乐、QQ 音乐、酷狗音乐、LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
+        h('p', { class: 'modal-msg' }, '一个按苹果式简约设计语言做的本地音乐播放器。\n功能参考 MusicBee：资料库索引、分类浏览、歌单、均衡器、桌面歌词、在线歌词与封面，另外加了 AI 实时赏析、AI 分类，并通过 MCP 开放给 Bot 控制。\n\n在线音乐：音隅聚合服务（网易云音乐、酷狗音乐、酷我音乐、哔哩哔哩）\n歌词：网易云音乐、QQ 音乐、酷狗音乐、LRCLIB（lrclib.net）\n封面：iTunes Search API、Deezer API\nAI：Anthropic Claude')));
     },
   };
 

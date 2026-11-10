@@ -15,6 +15,7 @@ import { McpServer, newToken } from './mcp.js';
 import { createTools, INSTRUCTIONS } from './mcp-tools.js';
 import { Updater } from './updater.js';
 import { recommend, candidatePool } from './recommend.js';
+import { OnlineMusic, DEFAULT_BASE, SOURCES, isOnlineId, normalizeBase } from './online-music.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const RENDERER = path.join(ROOT, 'src/renderer');
@@ -46,6 +47,8 @@ const DEFAULT_SETTINGS = {
   ai: { apiKeyEnc: '', baseURL: '', model: DEFAULT_MODEL, effort: 'low', autoTimeline: true },
   mcp: { enabled: false, port: 17890, lan: false, token: '' },
   update: { autoCheck: true },
+  // 在线音乐：聚合音乐服务的地址，搜索 / 榜单 / 播放地址都从它取
+  online: { enabled: true, base: DEFAULT_BASE },
   // AI 调音：设备信息、偏好、上次的推荐结果；auto 开启时按歌曲类型自动切换 profiles 里的曲线
   tune: { device: { type: '', model: '' }, wish: '', auto: false, profiles: [], last: null },
   window: null,
@@ -55,7 +58,7 @@ const DEFAULT_SETTINGS = {
 
 const settings = new JsonStore(path.join(DATA, 'settings.json'), DEFAULT_SETTINGS);
 // 补齐新增的嵌套默认值
-for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai', 'mcp', 'update', 'tune']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
+for (const k of ['eq', 'lyrics', 'desktopLyrics', 'ai', 'mcp', 'update', 'tune', 'online']) settings.data[k] = { ...DEFAULT_SETTINGS[k], ...settings.data[k] };
 if (!settings.data.mcp.token) { settings.data.mcp.token = newToken(); settings.save(); }
 
 function apiKey() {
@@ -105,7 +108,16 @@ const library = new Library({
   onProgress: (p) => send('lib:progress', p),
   onChange: () => send('lib:changed'),
 });
-const online = new Online({ dir: DATA, fetch: (...a) => net.fetch(...a), library, simplified: () => settings.data.lyrics.simplified });
+// 在线歌曲：歌单和播放队列里用到的要存盘，下次打开还在
+const music = new OnlineMusic({
+  dir: DATA,
+  fetch: (...a) => net.fetch(...a),
+  getConfig: () => settings.data.online,
+  pinned: () => new Set([...library.playlists.flatMap((p) => p.trackIds), ...(settings.data.session?.queue || [])].filter(isOnlineId)),
+});
+// 本地歌曲和在线歌曲统一按 id 取
+const trackOf = (id) => library.tracks.get(id) || music.tracks.get(id) || null;
+const online = new Online({ dir: DATA, fetch: (...a) => net.fetch(...a), library, music, simplified: () => settings.data.lyrics.simplified });
 const ai = new AiService({
   dir: DATA,
   getSettings: () => ({ ai: { ...settings.data.ai, apiKey: apiKey() } }),
@@ -143,7 +155,7 @@ const mcp = new McpServer({
   version: app.getVersion(),
   instructions: INSTRUCTIONS,
   getConfig: () => settings.data.mcp,
-  tools: createTools({ library, classifier, online, callRenderer, onlineLyrics: () => settings.data.lyrics.online, recommendList }),
+  tools: createTools({ library, classifier, online, music, trackOf, callRenderer, onlineLyrics: () => settings.data.lyrics.online, recommendList }),
 });
 const updater = new Updater({ onState: (st) => send('update:state', st) });
 updater.beforeQuit = () => { quitting = true; };
@@ -192,13 +204,19 @@ function registerProtocols() {
     const key = decodeURIComponent(url.pathname.slice(1));
     try {
       if (url.host === 'track') {
-        const t = library.tracks.get(key);
+        const t = trackOf(key);
         if (!t) return new Response('not found', { status: 404 });
+        if (t.online) return music.stream(t, request);
         if (t.needsTranscode) return serveFile(await transcoder.get(t), request, 'audio/flac');
         return serveFile(t.path, request, AUDIO_MIME[t.ext] || 'application/octet-stream');
       }
       if (url.host === 'cover') {
         const small = key.endsWith('_s');
+        if (isOnlineId(key)) {
+          const buf = await music.cover(small ? key.slice(0, -2) : key, small);
+          if (!buf) return new Response('not found', { status: 404 });
+          return new Response(buf, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400', 'Access-Control-Allow-Origin': '*' } });
+        }
         const file = library.coverPath(small ? key.slice(0, -2) : key, small);
         return new Response(await fsp.readFile(file), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=31536000', 'Access-Control-Allow-Origin': '*' } });
       }
@@ -390,7 +408,7 @@ function handle(ch, fn) {
 }
 
 function registerIpc() {
-  handle('lib:snapshot', () => library.snapshot());
+  handle('lib:snapshot', () => ({ ...library.snapshot(), online: music.kept() }));
   handle('lib:pickFolder', async () => {
     const r = await dialog.showOpenDialog(mainWin, { title: '选择音乐文件夹', properties: ['openDirectory', 'multiSelections'] });
     if (r.canceled) return [];
@@ -400,16 +418,20 @@ function registerIpc() {
   handle('lib:addFolder', (p) => { library.addFolder(p); return true; });
   handle('lib:removeFolder', (p) => library.removeFolder(p));
   handle('lib:rescan', () => { library.scan(); return true; });
-  handle('lib:update', (id, patch) => library.update(id, patch));
-  handle('lib:played', (id) => library.markPlayed(id));
-  handle('lib:duration', (id, d) => library.setDuration(id, d));
-  handle('lib:reveal', (id) => { const t = library.tracks.get(id); if (t) shell.showItemInFolder(t.path); });
+  handle('lib:update', (id, patch) => (isOnlineId(id) ? music.update(id, patch) : library.update(id, patch)));
+  handle('lib:played', (id) => (isOnlineId(id) ? music.markPlayed(id) : library.markPlayed(id)));
+  handle('lib:duration', (id, d) => (isOnlineId(id) ? music.setDuration(id, d) : library.setDuration(id, d)));
+  handle('lib:reveal', (id) => {
+    const t = trackOf(id);
+    if (t?.online) { if (/^https:\/\//.test(t.online.link)) shell.openExternal(t.online.link); } else if (t) shell.showItemInFolder(t.path);
+  });
   handle('lib:exists', (p) => fs.existsSync(p));
   handle('lib:suggestions', () => folderSuggestions());
 
-  handle('pl:create', (name, ids) => library.createPlaylist(name, ids));
-  handle('pl:update', (id, patch) => library.updatePlaylist(id, patch));
-  handle('pl:delete', (id) => library.deletePlaylist(id));
+  // 歌单里可以放在线歌曲：歌单变了就把用到的在线歌曲存盘
+  handle('pl:create', (name, ids) => { const pl = library.createPlaylist(name, ids); music.save(); return pl; });
+  handle('pl:update', (id, patch) => { const pl = library.updatePlaylist(id, patch); music.save(); return pl; });
+  handle('pl:delete', (id) => { library.deletePlaylist(id); music.save(); });
   handle('pl:import', async () => {
     const r = await dialog.showOpenDialog(mainWin, { title: '导入歌单', filters: [{ name: 'M3U 歌单', extensions: ['m3u', 'm3u8'] }], properties: ['openFile', 'multiSelections'] });
     if (r.canceled) return [];
@@ -425,7 +447,7 @@ function registerIpc() {
   });
 
   handle('lyrics:get', (id) => {
-    const t = library.tracks.get(id);
+    const t = trackOf(id);
     return t ? online.getLyrics(t, { online: settings.data.lyrics.online }) : { none: true };
   });
   handle('lyrics:search', (q) => online.searchLyrics(q));
@@ -435,7 +457,7 @@ function registerIpc() {
   handle('cover:apply', (id, url) => online.applyCover(id, url));
   handle('cover:fillMissing', () => { online.fillMissingCovers((p) => send('lib:progress', p)); return true; });
   handle('cover:auto', (id) => {
-    const t = library.tracks.get(id);
+    const t = library.tracks.get(id); // 在线歌曲自带封面，不用补
     return t && settings.data.lyrics.autoCover ? online.autoCover(t).catch(() => null) : null;
   });
   handle('cover:pickFile', async (id) => {
@@ -451,7 +473,7 @@ function registerIpc() {
   handle('ai:cached', (id) => ai.cached(id));
   handle('ai:cancel', (reqId) => ai.cancel(reqId));
   handle('ai:start', ({ reqId, kind, trackId: id, lines, history, ...rest }) => {
-    const track = library.tracks.get(id);
+    const track = trackOf(id);
     if (kind === 'recommend') {
       const { pool, profile, slot } = candidatePool(recInput());
       if (pool.length < 5) throw new Error('资料库里的歌太少，没法挑歌单');
@@ -480,6 +502,22 @@ function registerIpc() {
     job.then((result) => send('ai:done', { reqId, result }))
       .catch((e) => send('ai:error', { reqId, message: describeAiError(e) }));
     return true;
+  });
+
+  // 在线音乐
+  handle('online:search', (q, opts) => music.search(q, opts || {}));
+  handle('online:toplists', () => music.toplists());
+  handle('online:playlist', (id) => music.playlist(id));
+  handle('online:discover', () => music.discover());
+  handle('online:info', (id) => music.info(id));
+  handle('online:meta', () => ({ sources: SOURCES, base: music.base, defaultBase: DEFAULT_BASE }));
+  // 检查服务地址能不能用（设置页）
+  handle('online:test', async (base) => {
+    const url = normalizeBase(base);
+    const res = await net.fetch(`${url}/api/toplists`, { headers: { Accept: 'application/json' } });
+    const list = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(list)) throw new Error(`这个地址不是可用的音乐服务（HTTP ${res.status}）`);
+    return { base: url, toplists: list.length };
   });
 
   handle('rec:list', (mode, opts) => recommendList(mode, opts || {}));
@@ -518,8 +556,11 @@ function registerIpc() {
       delete patch.ai.apiKey;
     }
     if (patch.ffmpegPath !== undefined) transcoder.checked.clear();
+    if (patch.online?.base != null) patch.online.base = normalizeBase(patch.online.base);
     mergeDeep(settings.data, patch);
     settings.save();
+    if (patch.online) music.clearCache();
+    if (patch.session) music.save(); // 队列里的在线歌曲跟着存盘
     if (patch.theme) { nativeTheme.themeSource = patch.theme; applyTitleBarTheme(); }
     if (patch.desktopLyrics) {
       if ('enabled' in patch.desktopLyrics) setDesktopLyrics(patch.desktopLyrics.enabled);
@@ -620,6 +661,7 @@ app.on('before-quit', () => {
   library.store.flushSync();
   classifier.flushSync();
   recStore.flushSync();
+  music.flushSync();
   mcp.stop();
   // stop() 是异步的，进程可能等不到它删完；这里同步删掉连接信息，免得桥接脚本以为听音还开着
   try { fs.rmSync(mcp.infoFile, { force: true }); } catch { /* 无所谓 */ }

@@ -1,10 +1,11 @@
 // 资料库视图：路由、歌曲表格（虚拟滚动）、专辑 / 歌手 / 流派 / 年代 / 文件夹 / 歌单 / 智能列表
 import { h, icon, clear, fmtTime, fmtTotal, fmtDate, coverEl, compare } from './dom.js';
-import { state, emit, on, derived, matchSearch, sortAlbumTracks, patchTrack, uiPref, setUiPref, loadLibrary, albumKey } from './store.js';
+import { state, emit, on, derived, matchSearch, sortAlbumTracks, patchTrack, uiPref, setUiPref, loadLibrary, albumKey, onlineEnabled, onlineTracks } from './store.js';
 import { player, playList, playNext, addToQueue } from './player.js';
 import { menu, toast, promptBox, confirmBox } from './ui.js';
 import { openCoverSearch, openLyricsSearch } from './dialogs.js';
 import { recommendView } from './recommend.js';
+import { onlineView, onlineListView, onlineSearchView, searchOnline, SOURCE_NAMES } from './online.js';
 
 const content = document.getElementById('content');
 const history = { stack: [], pos: -1 };
@@ -25,12 +26,19 @@ export function back() { if (canBack()) { history.pos--; const v = history.stack
 export function forward() { if (canForward()) { history.pos++; const v = history.stack[history.pos]; navigate(v.name, v.arg, { push: false }); } }
 
 let activeTable = null;
+// 当前视图挂的定时器、订阅：换视图时清掉
+let viewCleanup = [];
+export function onViewClose(fn) { viewCleanup.push(fn); }
 
 export function render() {
   activeTable?.destroy();
   activeTable = null;
+  viewCleanup.forEach((f) => f());
+  viewCleanup = [];
   const { name, arg } = state.view;
-  if (!state.tracks.length && !['playlist', 'settings'].includes(name)) return clear(content, welcome());
+  // 资料库是空的也能听在线音乐、看歌单和收藏
+  const needsLibrary = !['playlist', 'settings', 'online', 'onlinelist', 'loved', 'recent', 'top'].includes(name) && !(name === 'search' && onlineEnabled());
+  if (!state.tracks.length && needsLibrary) return clear(content, welcome());
   const fn = VIEWS[name] || VIEWS.songs;
   clear(content, fn(arg));
 }
@@ -111,9 +119,10 @@ export function songTable(tracks, opts = {}) {
       onclick: async (e) => { e.stopPropagation(); await toggleLove(t); },
       ondblclick: (e) => e.stopPropagation(),
     }, icon('heart', 15));
-    const linkArtist = h('a', { onclick: (e) => { e.stopPropagation(); navigate('artist', firstArtist(t.artist)); } }, t.artist || '未知歌手');
+    const linkArtist = h('a', { onclick: (e) => { e.stopPropagation(); gotoArtist(t); } }, t.artist || '未知歌手');
     const row = h('div', {
-      class: `trow ${selected.has(t.id) ? 'selected' : ''} ${cur ? 'playing' : ''}`,
+      class: `trow ${selected.has(t.id) ? 'selected' : ''} ${cur ? 'playing' : ''} ${t.unavailable ? 'unavailable' : ''}`,
+      title: t.unavailable ? '刚才没有找到可播放的音源' : null,
       style: { transform: `translateY(${i * ROW}px)` },
       draggable: 'true',
       dataset: { i: String(i) },
@@ -123,7 +132,7 @@ export function songTable(tracks, opts = {}) {
       h('span', { class: 't-title' }, t.title),
       compact ? null : opts.sub ? h('span', { class: 't-sub t-reason' }, opts.sub(t)) : h('span', { class: 't-sub' }, formatLabel(t)))),
     h('div', { class: 'c-artist' }, linkArtist),
-    h('div', { class: 'c-album' }, t.album ? h('a', { onclick: (e) => { e.stopPropagation(); navigate('album', albumKey(t)); } }, t.album) : ''),
+    h('div', { class: 'c-album' }, !t.album ? '' : t.online ? t.album : h('a', { onclick: (e) => { e.stopPropagation(); gotoAlbum(t); } }, t.album)),
     h('div', { class: 'c-dur' }, fmtTime(t.duration)),
     h('div', { class: 'c-plays' }, t.playCount || ''),
     h('div', { class: 'c-love' }, love));
@@ -226,7 +235,18 @@ export function songTable(tracks, opts = {}) {
   return { el: table, api };
 }
 
+export const sourceName = (t) => SOURCE_NAMES[t.online?.source] || t.online?.source || '';
+
+// 在线歌曲没有本地的歌手页 / 专辑页：点歌手改成在线搜索
+export function gotoArtist(t) {
+  if (t.online) { if (t.artist) searchOnline(firstArtist(t.artist)); } else navigate('artist', firstArtist(t.artist));
+}
+export function gotoAlbum(t) {
+  if (!t.online && t.album) navigate('album', albumKey(t));
+}
+
 export function formatLabel(t) {
+  if (t.online) return `在线 · ${sourceName(t)}${t.online.fee === 'vip' ? ' · 会员' : ''}`;
   const ext = (t.ext || '').toUpperCase();
   if (t.lossless) return `${t.bitsPerSample > 16 || t.sampleRate > 48000 ? 'Hi-Res 无损' : '无损'} · ${ext}`;
   return t.bitrate ? `${ext} · ${t.bitrate} kbps` : ext;
@@ -294,12 +314,14 @@ export function trackMenu(ids, x, y, { playFrom, playlistId, onRemoved } = {}) {
       }
       emit('loved');
     } },
-    one && { label: '转到专辑', icon: 'album', disabled: !one.album, onClick: () => navigate('album', albumKey(one)) },
-    one && { label: '转到歌手', icon: 'user', onClick: () => navigate('artist', firstArtist(one.artist)) },
+    one && !one.online && { label: '转到专辑', icon: 'album', disabled: !one.album, onClick: () => gotoAlbum(one) },
+    one && !one.online && { label: '转到歌手', icon: 'user', onClick: () => gotoArtist(one) },
+    one?.online && { label: '在线搜索这位歌手', icon: 'search', disabled: !one.artist, onClick: () => gotoArtist(one) },
     '-',
     one && { label: '查找歌词…', icon: 'mic', onClick: () => openLyricsSearch(one) },
-    one && { label: '查找封面…', icon: 'image', onClick: () => openCoverSearch(one) },
-    one && { label: '在资源管理器中显示', icon: 'folderOpen', onClick: () => window.api.invoke('lib:reveal', one.id) },
+    one && !one.online && { label: '查找封面…', icon: 'image', onClick: () => openCoverSearch(one) },
+    one && !one.online && { label: '在资源管理器中显示', icon: 'folderOpen', onClick: () => window.api.invoke('lib:reveal', one.id) },
+    one?.online?.link && { label: `在${sourceName(one)}打开`, icon: 'external', onClick: () => window.api.invoke('lib:reveal', one.id) },
     playlistId && '-',
     playlistId && { label: '从歌单中移除', icon: 'trash', onClick: () => removeFromPlaylist(playlistId, ids, onRemoved) },
   ], x, y);
@@ -325,14 +347,26 @@ function currentListIds() {
 }
 
 function searchView(q) {
+  const canOnline = onlineEnabled();
+  const scope = !canOnline ? 'local' : state.tracks.length ? state.searchScope : 'online';
+  const seg = canOnline ? h('div', { class: 'seg' }, [['local', '资料库'], ['online', '在线']].map(([k, label]) =>
+    h('button', { class: scope === k ? 'active' : '', onclick: () => { state.searchScope = k; render(); } }, label))) : null;
+  if (scope === 'online') return onlineSearchView(q, seg);
   const tracks = matchSearch(state.tracks, q);
   const ql = q.trim().toLowerCase();
   const { albums, artists } = derived();
   const hitArtists = artists.filter((a) => a.name.toLowerCase().includes(ql)).slice(0, 12);
   const hitAlbums = albums.filter((a) => `${a.name} ${a.artist}`.toLowerCase().includes(ql)).slice(0, 12);
+  const head = (actions) => pageHead({ eyebrow: 'Search', title: `“${q}”`, sub: `${tracks.length} 首歌曲 · ${hitArtists.length} 位歌手 · ${hitAlbums.length} 张专辑`, actions });
+  // 资料库里没有：引到在线搜索
+  if (!tracks.length && canOnline) {
+    return h('div', { class: 'page' }, head([seg]),
+      h('div', { class: 'empty' }, icon('search', 34, { 'stroke-width': 1.4 }), '资料库里没有匹配的歌曲',
+        h('button', { class: 'btn btn-primary', onclick: () => { state.searchScope = 'online'; render(); } }, icon('globe', 15), `在线搜索“${q}”`)));
+  }
   const t = songTable(tracks, { emptyText: '没有匹配的歌曲' });
   return h('div', { class: 'page' },
-    pageHead({ eyebrow: 'Search', title: `“${q}”`, sub: `${tracks.length} 首歌曲 · ${hitArtists.length} 位歌手 · ${hitAlbums.length} 张专辑`, actions: playButtons(() => tracks.map((x) => x.id)) }),
+    head([seg, ...playButtons(() => tracks.map((x) => x.id))]),
     hitArtists.length || hitAlbums.length ? h('div', { style: { flexShrink: 0, padding: '0 20px' } },
       hitArtists.length ? h('div', { class: 'row-scroll' }, hitArtists.map(artistTile)) : null,
       hitAlbums.length ? h('div', { class: 'row-scroll' }, hitAlbums.map(albumTile)) : null) : null,
@@ -543,10 +577,12 @@ function folderView(dir) {
 }
 
 function smartView(kind) {
+  // 喜欢过、播放过的在线歌曲也算在内
+  const all = () => [...state.tracks, ...onlineTracks()];
   const conf = {
-    loved: { title: '我喜欢', eyebrow: 'Loved', list: () => state.tracks.filter((t) => t.loved).sort((a, b) => compare(a.artist, b.artist)), empty: '点一下歌曲右侧的心形，喜欢的歌会出现在这里' },
-    recent: { title: '最近播放', eyebrow: 'Recently Played', list: () => state.tracks.filter((t) => t.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 300), empty: '还没有播放记录' },
-    top: { title: '最常播放', eyebrow: 'Most Played', list: () => state.tracks.filter((t) => t.playCount).sort((a, b) => b.playCount - a.playCount).slice(0, 100), empty: '还没有播放记录' },
+    loved: { title: '我喜欢', eyebrow: 'Loved', list: () => all().filter((t) => t.loved).sort((a, b) => compare(a.artist, b.artist)), empty: '点一下歌曲右侧的心形，喜欢的歌会出现在这里' },
+    recent: { title: '最近播放', eyebrow: 'Recently Played', list: () => all().filter((t) => t.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 300), empty: '还没有播放记录' },
+    top: { title: '最常播放', eyebrow: 'Most Played', list: () => all().filter((t) => t.playCount).sort((a, b) => b.playCount - a.playCount).slice(0, 100), empty: '还没有播放记录' },
     added: { title: '最近添加', eyebrow: 'Recently Added', list: () => [...state.tracks].sort((a, b) => b.addedAt - a.addedAt).slice(0, 300), empty: '' },
   }[kind];
   const list = conf.list();
@@ -635,6 +671,8 @@ const VIEWS = {
   added: () => smartView('added'),
   playlist: playlistView,
   foryou: recommendView,
+  online: onlineView,
+  onlinelist: onlineListView,
 };
 
 export function scrollToPlaying() { activeTable?.scrollToPlaying(); }

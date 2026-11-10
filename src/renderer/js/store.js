@@ -24,7 +24,23 @@ export const state = {
   tags: {},
   tagDims: {},
   tagStatus: null,
+  // 在线歌曲不进资料库列表（tracks），但和本地歌曲一起放在 byId 里，队列、歌单、歌词都按 id 取
+  searchScope: 'local',
 };
+
+export const isOnline = (t) => !!t?.online;
+export const onlineEnabled = () => state.settings?.online?.enabled !== false;
+export const onlineTracks = () => [...state.byId.values()].filter(isOnline);
+
+// 主进程返回的在线歌曲 → 界面里唯一的那份对象（已有的就地更新，保持引用不变）
+export function adoptOnline(list) {
+  return (list || []).map((t) => {
+    const cur = state.byId.get(t.id);
+    if (cur) return Object.assign(cur, t);
+    state.byId.set(t.id, t);
+    return t;
+  });
+}
 
 let derivedCache = null;
 
@@ -36,8 +52,12 @@ export function albumKey(t) {
 
 export async function loadLibrary() {
   const snap = await window.api.invoke('lib:snapshot');
+  // 这次会话里见过的在线歌曲（搜索结果、榜单）留着，免得队列里的歌找不到
+  const seen = onlineTracks();
   state.tracks = snap.tracks;
   state.byId = new Map(snap.tracks.map((t) => [t.id, t]));
+  for (const t of seen) state.byId.set(t.id, t);
+  adoptOnline(snap.online);
   state.playlists = snap.playlists;
   state.folders = snap.folders;
   state.scanning = snap.scanning;

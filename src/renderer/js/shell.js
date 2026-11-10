@@ -1,8 +1,8 @@
 // 外框：顶栏、侧栏导航、底部播放条、沉浸式播放页
 import { h, icon, clear, fmtTime, coverEl, debounce } from './dom.js';
-import { state, on, emit, derived, saveSettings } from './store.js';
+import { state, on, emit, derived, saveSettings, onlineEnabled, onlineTracks } from './store.js';
 import { player, analyser, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat } from './player.js';
-import { navigate, back, forward, canBack, canForward, playlistMenu, addToPlaylist, toggleLove, albumKey, firstArtist } from './views.js';
+import { navigate, back, forward, canBack, canForward, playlistMenu, addToPlaylist, toggleLove, gotoArtist, gotoAlbum } from './views.js';
 import { setTab, toggleSide, lyricsView } from './side.js';
 import { ai } from './ai-ctl.js';
 import { activeProfile } from './tune.js';
@@ -72,13 +72,16 @@ export function initTitlebar() {
     const q = input.value.trim();
     state.search = q;
     if (q) {
-      if (state.view.name !== 'search') before = state.view;
+      // 在「在线音乐」里搜，默认搜在线；在资料库里搜，默认搜本地
+      if (state.view.name !== 'search') { before = state.view; state.searchScope = ['online', 'onlinelist'].includes(state.view.name) ? 'online' : 'local'; }
       navigate('search', q, { push: state.view.name !== 'search' });
     } else if (state.view.name === 'search') {
       navigate(before?.name || 'songs', before?.arg ?? null);
     }
   }, 220);
   input.addEventListener('input', run);
+  // 别处发起的搜索（比如点在线歌曲的歌手名）：把关键词填进搜索框
+  on('search:set', (q) => { if (state.view.name !== 'search') before = state.view; input.value = q; state.search = q; });
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { input.value = ''; run(); input.blur(); } });
 
   const themeBtn = document.getElementById('themeBtn');
@@ -144,13 +147,13 @@ export function initSidebar() {
   const item = (key, label, ic, arg = null, count = null) => {
     const active = state.view.name === key && (arg == null || state.view.arg === arg)
       || (key === 'albums' && state.view.name === 'album') || (key === 'artists' && state.view.name === 'artist')
-      || (key === 'genres' && state.view.name === 'genre') || (key === 'years' && state.view.name === 'year') || (key === 'folders' && state.view.name === 'folder') || (key === 'aitags' && state.view.name === 'aitag');
+      || (key === 'genres' && state.view.name === 'genre') || (key === 'years' && state.view.name === 'year') || (key === 'folders' && state.view.name === 'folder') || (key === 'aitags' && state.view.name === 'aitag') || (key === 'online' && state.view.name === 'onlinelist');
     return h('div', { class: `nav-item ${active ? 'active' : ''}`, onclick: () => navigate(key, arg) }, icon(ic, 18), h('span', { class: 'label' }, label),
       count != null ? h('span', { class: 'count' }, count) : null);
   };
   const draw = () => {
     const d = state.tracks.length ? derived() : { albums: [], artists: [], genres: [] };
-    const loved = state.tracks.filter((t) => t.loved).length;
+    const loved = state.tracks.filter((t) => t.loved).length + onlineTracks().filter((t) => t.loved).length;
     const lists = state.playlists.map((p) => {
       const el = item('playlist', p.name, 'playlist', p.id, p.trackIds.length);
       el.addEventListener('contextmenu', (e) => { e.preventDefault(); playlistMenu(p, e.clientX, e.clientY); });
@@ -172,6 +175,8 @@ export function initSidebar() {
         item('years', '年代', 'calendar'),
         item('aitags', 'AI 分类', 'wand'),
         item('folders', '文件夹', 'folder')),
+      onlineEnabled() ? h('div', { class: 'nav-group' }, h('div', { class: 'nav-title' }, '在线'),
+        item('online', '在线音乐', 'globe')) : null,
       h('div', { class: 'nav-group' }, h('div', { class: 'nav-title' }, '收藏'),
         item('foryou', '为你推荐', 'compass'),
         item('loved', '我喜欢', 'heart', null, loved || null),
@@ -190,7 +195,7 @@ export function initSidebar() {
       lists.length ? lists : h('div', { class: 'nav-item', style: { color: 'var(--text-3)', fontSize: '12.5px' } }, '拖动歌曲到这里建立歌单')));
   };
   draw();
-  for (const evt of ['view', 'library', 'playlists', 'loved']) on(evt, draw);
+  for (const evt of ['view', 'library', 'playlists', 'loved', 'settings']) on(evt, draw);
 }
 
 // ---------------- 播放条 ----------------
@@ -255,13 +260,14 @@ export function initPlayerbar() {
     clear(cover, coverEl(t?.coverId).firstChild, h('div', { class: 'expand-hint' }, icon('expand', 18)));
     cover.onclick = () => t && toggleImmersive();
     title.textContent = t?.title || '听音';
-    clear(artist, t ? h('span', { class: 'link', onclick: () => navigate('artist', firstArtist(t.artist)) }, t.artist || '未知歌手') : '选一首歌开始吧',
-      t?.album ? [' — ', h('span', { class: 'link', onclick: () => navigate('album', albumKey(t)) }, t.album)] : null);
+    clear(artist, t ? h('span', { class: 'link', onclick: () => gotoArtist(t) }, t.artist || '未知歌手') : '选一首歌开始吧',
+      t?.album ? [' — ', h('span', { class: t.online ? '' : 'link', onclick: () => gotoAlbum(t) }, t.album)] : null);
     love.classList.toggle('on', !!t?.loved);
     love.style.visibility = t ? 'visible' : 'hidden';
   };
   const drawState = () => {
     clear(playBtn, icon(player.playing ? 'pause' : 'play', 19));
+    playBtn.classList.toggle('loading', !!player.loading);
     shuffleBtn.classList.toggle('on', player.shuffle);
     clear(repeatBtn, icon(player.repeat === 'one' ? 'repeat1' : 'repeat', 17));
     repeatBtn.classList.toggle('on', player.repeat !== 'off');
