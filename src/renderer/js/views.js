@@ -1,5 +1,5 @@
 // 资料库视图：路由、歌曲表格（虚拟滚动）、专辑 / 歌手 / 流派 / 年代 / 文件夹 / 歌单 / 智能列表
-import { h, icon, clear, fmtTime, fmtTotal, fmtDate, coverEl, compare } from './dom.js';
+import { h, icon, clear, fmtTime, fmtTotal, fmtDate, coverEl, compare, vinylArt } from './dom.js';
 import { state, emit, on, derived, matchSearch, sortAlbumTracks, patchTrack, uiPref, setUiPref, loadLibrary, albumKey, onlineEnabled, onlineTracks } from './store.js';
 import { player, playList, playNext, addToQueue } from './player.js';
 import { menu, toast, promptBox, confirmBox } from './ui.js';
@@ -642,7 +642,7 @@ function welcome() {
     }
   });
   return h('div', { class: 'welcome' }, h('div', { class: 'welcome-card' },
-    h('img', { class: 'big-ico', src: 'build/icon.png' }),
+    vinylArt(h('div', { class: 'cover' }, h('img', { class: 'big-ico', src: 'build/icon.png' })), 'still'),
     h('div', { class: 'hello' }, `${hello} 👋`),
     h('h2', {}, '把你的', h('em', {}, '音乐'), '带进来'),
     h('p', {}, '选择存放音乐的文件夹，听音会读取标签、提取封面并建立索引。支持 MP3、FLAC、M4A、OGG、WAV，装了 ffmpeg 还能播放 APE、WMA、DSD。'),

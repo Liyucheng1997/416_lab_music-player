@@ -165,3 +165,9 @@ export function debounce(fn, ms) {
 // 拼音/大小写无关的排序
 const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
 export const compare = (a, b) => collator.compare(a || '', b || '');
+
+// 黑胶唱片 + 封套：sleeve 是封套里放的内容（封面）
+export function vinylArt(sleeve, cls = '') {
+  const label = h('div', { class: 'vinyl-label' }, [9, 16, 24, 14, 8].map((p) => h('i', { style: { height: `${p}%` } })));
+  return h('div', { class: `vinyl-art ${cls}` }, h('div', { class: 'vinyl' }, label), h('div', { class: 'sleeve' }, sleeve));
+}

@@ -235,7 +235,7 @@ function registerProtocols() {
 // ---------------- 窗口 ----------------
 function themeColors() {
   const dark = settings.data.theme === 'dark' || (settings.data.theme === 'system' && nativeTheme.shouldUseDarkColors);
-  return dark ? { bg: '#000000', symbol: '#f5f5f7' } : { bg: '#f5f5f7', symbol: '#1d1d1f' };
+  return dark ? { bg: '#141110', symbol: '#f7efeb' } : { bg: '#f6ece7', symbol: '#231f1e' };
 }
 
 function createMainWindow() {

@@ -1,5 +1,5 @@
 // 外框：顶栏、侧栏导航、底部播放条、沉浸式播放页
-import { h, icon, clear, fmtTime, coverEl, debounce } from './dom.js';
+import { h, icon, clear, fmtTime, coverEl, debounce, vinylArt } from './dom.js';
 import { state, on, emit, derived, saveSettings, onlineEnabled, onlineTracks } from './store.js';
 import { player, analyser, toggle, next, prev, seek, setVolume, toggleMute, toggleShuffle, cycleRepeat } from './player.js';
 import { navigate, back, forward, canBack, canForward, playlistMenu, addToPlaylist, toggleLove, gotoArtist, gotoAlbum } from './views.js';
@@ -51,6 +51,65 @@ export function slider({ onInput, onChange, tip }) {
     onChange?.(value);
   });
   return { el, set: (v) => { if (!dragging) set(v); }, setBuffered: (v) => { buf.style.width = `${v * 100}%`; }, get dragging() { return dragging; } };
+}
+
+// ---------------- 波形进度条 ----------------
+// 波形按歌曲 id 生成（同一首歌每次形状一样），只是装饰，不代表真实响度
+const WAVE_BARS = 64;
+export function waveSlider({ onInput, onChange, tip }) {
+  const bars = Array.from({ length: WAVE_BARS }, () => h('i'));
+  const tipEl = h('div', { class: 'tip' });
+  const el = h('div', { class: 'wave empty' }, bars, tipEl);
+  let value = 0;
+  let lit = -1;
+  let dragging = false;
+  const set = (v) => {
+    value = Math.max(0, Math.min(1, v || 0));
+    const n = Math.round(value * WAVE_BARS);
+    if (n === lit) return;
+    lit = n;
+    bars.forEach((b, i) => b.classList.toggle('on', i < n));
+  };
+  const setSeed = (seed) => {
+    el.classList.toggle('empty', seed == null);
+    let x = 2166136261;
+    for (const ch of String(seed ?? '')) x = Math.imul(x ^ ch.charCodeAt(0), 16777619);
+    const rnd = () => { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; return (x >>> 0) / 4294967296; };
+    let prev = 0.5;
+    bars.forEach((b, i) => {
+      // 相邻柱子高度相近，两端收窄，看起来像一段真实的波形
+      prev = prev * 0.3 + rnd() * 0.7;
+      const edge = Math.min(1, Math.min(i, WAVE_BARS - 1 - i) / 5 + 0.35);
+      b.style.height = `${Math.round((0.18 + prev ** 1.7 * 0.82) * edge * 100)}%`;
+    });
+  };
+  const ratio = (e) => {
+    const r = el.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  };
+  el.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    el.classList.add('drag');
+    el.setPointerCapture(e.pointerId);
+    set(ratio(e));
+    onInput?.(value);
+  });
+  el.addEventListener('pointermove', (e) => {
+    const r = ratio(e);
+    tipEl.textContent = tip(r);
+    tipEl.style.left = `${r * 100}%`;
+    if (!dragging) return;
+    set(r);
+    onInput?.(value);
+  });
+  el.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('drag');
+    onChange?.(value);
+  });
+  setSeed(null);
+  return { el, set: (v) => { if (!dragging) set(v); }, setSeed, get dragging() { return dragging; } };
 }
 
 // ---------------- 顶栏 ----------------
@@ -214,7 +273,7 @@ export function initPlayerbar() {
   const repeatBtn = h('button', { class: 'icon-btn', title: '循环', onclick: cycleRepeat });
   const cur = h('span', {}, '0:00');
   const total = h('span', {}, '0:00');
-  const prog = slider({
+  const prog = waveSlider({
     tip: (r) => fmtTime(r * player.duration),
     onChange: (v) => seek(v * player.duration),
     onInput: (v) => { cur.textContent = fmtTime(v * player.duration); },
@@ -264,6 +323,7 @@ export function initPlayerbar() {
       t?.album ? [' — ', h('span', { class: t.online ? '' : 'link', onclick: () => gotoAlbum(t) }, t.album)] : null);
     love.classList.toggle('on', !!t?.loved);
     love.style.visibility = t ? 'visible' : 'hidden';
+    prog.setSeed(t ? t.id : null);
   };
   const drawState = () => {
     clear(playBtn, icon(player.playing ? 'pause' : 'play', 19));
@@ -347,7 +407,7 @@ function drawImmersive() {
   const v = lyricsView({ big: true });
   drawSubs.push(v.destroy);
   clear(imm,
-    h('div', { class: 'imm-left' }, coverEl(t.coverId, { small: false }),
+    h('div', { class: 'imm-left' }, vinylArt(coverEl(t.coverId, { small: false })),
       h('div', { class: 'imm-meta' }, h('h2', {}, t.title), h('div', { class: 'a' }, [t.artist, t.album].filter(Boolean).join(' — '))),
       canvas, noteBox),
     h('div', { class: 'imm-right' }, v.el.childElementCount ? v.el : h('div', { class: 'lyric-empty' }, '暂无歌词')),
@@ -358,7 +418,7 @@ function drawImmersive() {
 
 function startViz(canvas) {
   const g = canvas.getContext('2d');
-  const color = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#0071e3';
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#ee7f4b';
   const data = new Uint8Array(1024);
   const N = 48;
   const draw = () => {
